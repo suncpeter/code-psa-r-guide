@@ -20,6 +20,9 @@ header-includes:
 ---
 
 ```{r include=F}
+# Prevent scientific notation
+options(scipen=999)
+
 # Shenyang Guo's Stata program, hodgesl, version 8.2
 hodgesl <- function(dataname, varname, blockname, treatname) {
   blockname_str <- deparse(substitute(blockname))
@@ -116,7 +119,7 @@ hodgesl <- function(dataname, varname, blockname, treatname) {
   return(results)
 }
 
-# Imbalance function
+# Imbalance function adapted for covariate table
 imbalance <- function(cov, method) {
 
   # get quosure
@@ -159,6 +162,38 @@ imbalance <- function(cov, method) {
   } else {
     return(tibble(cov = cov_name, method = method_name, dx = dx, dxm = NA))
   }
+}
+
+# Shenyang Guo's Stata program, imbalance, version 8.2
+imbalance2 <- function(df, varname, treatname, blockname) {
+
+  # dx
+  df2 <- df %>%
+    group_by({{ treatname }}) %>%
+    summarise(m_x = mean({{ varname }}), sd_x = sd({{ varname }}), .groups = "drop")
+  mxt <- df2[2, 2]
+  mxc <- df2[1, 2]
+  s2xt <- df2[2, 3]^2
+  s2xc <- df2[1, 3]^2
+  sx <- sqrt((s2xt + s2xc) / 2)
+  dx <- as.numeric(abs(mxt - mxc) / sx)
+
+  # dx
+  df3 <- df %>%
+    group_by({{ blockname }}, {{ treatname }}) %>%
+    summarise(
+      m_x = mean({{ varname }}),
+      sd_x = sd({{ varname }}),
+      n = n(),
+      .groups = "drop"
+    )
+
+  mxc <- as.numeric(mean(filter(df3, {{ treatname }} == 0)$m_x))
+  mxt <- as.numeric(mean(filter(df3, {{ treatname }} == 1)$m_x))
+  dxm_num <- abs(mxt - mxc)
+  dxm <- as.numeric(dxm_num / sx)
+
+  return(list(dx = dx, dxm = dxm))
 }
 ```
 
@@ -234,7 +269,7 @@ The standardized mean difference (SMD) is a commonly used balance measure.^[The 
 
 ```{r fig.width=6, fig.height=3.5, fig.align="center"}
 # Balance table
-bal.tab(select(
+cobalt::bal.tab(select(
   gm_df, married, educ, pov, employ, open, race, chdage, cgage, CRA47A,
   mental, arrest, PSH17A, maltx, ra, cidi, cgneed, cwwrep
 ),
@@ -247,7 +282,7 @@ binary = "std"
 )
 
 # Love plot
-love.plot(select(
+cobalt::love.plot(select(
   gm_df, married, educ, pov, employ, open, race, chdage, cgage, CRA47A,
   mental, arrest, PSH17A, maltx, ra, cidi, cgneed, cwwrep
 ),
@@ -270,7 +305,7 @@ The order of the matching can be specified using the `m.order` argument. If this
 
 Finally, the logit of the predicted probability from a logistic regression model can be supplied to the `distance` argument. The logit of the predicted probability is used, because the logit is approximately normally distributed.
 
-The choice of explanatory variables (i.e., conditioning variables) in the first-step model predicting propensity scores of service receipt serves a paramount important role in the whole propensity score analysis.We chose these variables based on a review of substance abuse literature to determine what characteristics were associated with treatment receipt:
+The choice of explanatory variables (i.e., conditioning variables) in the first-step model predicting propensity scores of service receipt serves a paramount important role in the whole propensity score analysis. We chose these variables based on a review of substance abuse literature to determine what characteristics were associated with treatment receipt:
 
 ```{r}
 # Logistic regression specification
@@ -345,7 +380,7 @@ cobalt::bal.tab(gm_out,
 \newpage
 ### Greedy Nearest Neighbor Mahalanobis Distance Matching Without Replacement
 
-Here we perform Mahalanobis distance matching without replacement and without including an estimated propensity score. 
+Here we perform Mahalanobis distance matching without replacement and without including an estimated propensity score.
 
 ```{r}
 set.seed(1000)
@@ -519,13 +554,22 @@ library(optmatch)
 library(knitr)
 library(broom)
 library(sandwich)
-library(kableExtra)
-library(tidyverse)
 library(rlang)
 select <- dplyr::select
 ```
 
 ### Load Data
+
+This dataset comes from a study that investigates intergenerational dependence on welfare and its relation to child academic achievement.
+
+The dependent variable is `lwss97`, the age-normed "letter-word" identification score of the Woodcock-Johnson Revised Tests of Achievement. A high score on this measure indicates high achievement. The treatment variable is `kuse` or children who ever used Aid to Families With Dependent Children (AFDC). The covariates are:
+
+- `mratio96`: Ratio of Family Income to Poverty Line in 1996
+- `pcged97`: Caregiver's Education in 1997 (Years of Schooling)
+- `pcg_adc`: Caregiver's History of Using Welfare (Number of Years; range: 0-7)
+- `black`: Child's Race: African American (1 = African American; 0 = Other)
+- `age97`: Child's Age in 1997
+- `male`: Child's Gender: Male (1 = Male; 0 = Female)
 
 ```{r message=FALSE, warning=FALSE}
 d <- haven::read_dta("data/opt/chpt5_2_original.dta")
@@ -534,6 +578,8 @@ cds <- haven::read_dta("data/opt/chpt5_2ps.dta")
 ```
 
 ### Bivariate Comparisons 
+
+With the exception of child's gender, the difference on each covariate between treated and control groups is statistically significant. Without controlling for these covariates, the study's estimate of treatment effect would be biased.
 
 ```{r message=FALSE, warning=FALSE}
 # Intergenerational dependence
@@ -557,25 +603,40 @@ d %>%
   mutate(t.pvalue = map(ttest, ~ round(.$p.value, 3))) %>%
   unnest(cols = c(t.stat, t.pvalue)) %>%
   select(-data, -wilcoxon, -ttest)
+
+# SMD Balance Checks
+c1 <- cobalt::bal.tab(
+  x = d %>% select(mratio96, pcged97, pcg_adc, black, age97, male),
+  treat = d$kuse,
+  binary = "std",
+  threshold = c(m = .1),
+  s.d.denom = "pooled"
+)
+cobalt::love.plot(c1)
 ```
 
-### Outcome Without Bias Control
+### Outcome Models Without Bias Control
 
-```{r message=FALSE, warning=FALSE}
-# visual
-d <- d %>%
-  dplyr::mutate(treatfac = case_when(
-    kuse == 0 ~ "Nonusers",
-    kuse == 1 ~ "Users"
-  ))
-ggplot(d, aes(y = lwss97, x = treatfac)) +
-  geom_boxplot()
+We first observe that the control group had a higher letter-word identification score than the treatment group:
 
-# t-test
+```{r}
+d %>%
+  ggplot(aes(y = lwss97, x = factor(kuse))) +
+  geom_boxplot() +
+  labs(x = "Treatment", y = "Letter-Word Identification Score") +
+  scale_x_discrete(labels = c("Control", "Treated"))
+```
+
+We can estimate the ATE using an independent samples $t$ test. It shows that the treated group on average had a mean letter-word identification score that was 9.82 points lower than that of the control group ($p < .001$).
+
+```{r}
 t.test(lwss97 ~ kuse, data = d, var.equal = T) %>%
   broom::tidy()
+```
 
-# regression
+We can also estimate the ATE using an OLS regression model. It shows that, controlling for covariates, the treated group on average had a letter-word identification score that is 4.73 points lower than that of the control group (p < .001).
+
+```{r}
 reg <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96 + pcg_adc,
   data = d
 )
@@ -589,63 +650,89 @@ broom::tidy(lmtest::coeftest(reg, vcov = sandwich::vcovCL, cluster = d$pcg_id))
 
 #### Distribution of estimated propensity scores
 
-```{r message=F, warning=F, error=F, fig.width=4, fig.height=3, fig.align="center"}
-cds <- cds %>%
-  dplyr::mutate(treatfac = case_when(
-    kuse == 0 ~ "Nonusers",
-    kuse == 1 ~ "Users"
-  ))
+As seen in the figures below, there is no sizeable common support region of the estimated propensity scores by treatment status, so using greedy matching would produce a nontrivial loss of matched participants. Therefore, we decide to use optimal matching.
 
-ggplot(cds, aes(x = treatfac, y = ps)) +
+```{r message=F, warning=F, error=F, fig.width=4, fig.height=2.5, fig.align="center"}
+cds %>%
+  ggplot(aes(x = factor(kuse), y = ps)) +
   geom_boxplot() +
-  labs(title = "Box Plots of Estimated Propensity Scores")
+  labs(y = "Propensity Score", x = "Treatment Condition") +
+  scale_x_discrete(labels = c("Control", "Treatment")) +
+  theme_classic()
 
-ggplot(cds, aes(x = ps, color = treatfac)) +
+cds %>%
+  ggplot(aes(x = ps, color = factor(kuse))) +
   geom_histogram(aes(y = ..density..), fill = "white", position = "dodge") +
   geom_density(alpha = .2, fill = "#FF6666") +
-  labs(title = "Histograms of Estimated Propensity Scores")
+  labs(y = "Density", x = "Propensity Score", color = "Treatment Condition") +
+  scale_color_discrete(labels = c("Control", "Treatment")) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+```
+
+We would lose 45.3% cases if we used greedy nearest neighbor matching:
+
+```{r}
+(matchit(kuse ~ mratio96 + pcged97 + pcg_adc + black + age97 + male,
+  data = d,
+  method = "nearest",
+  distance = "glm"
+))
+(nrow(d) - 548) / nrow(d)
 ```
 
 \newpage
 #### Optimal Matching
 
-```{r message=F, warning=F, error=F, results = "hide"}
+The first argument that `optmatch::fullmatch()` requires is "a matrix of non-negative discrepancies, each indicating the permissibility and desirability of matching the unit corresponding to its row (treated) to the unit corresponding to its column (control)." First, we calculate the sample ranks of the propensity scores generated by generalized boosted regression using `rank(ps)`. Second, we use `outer(x, y, "-")`, which will subtract $y$ control units from $x$ treated units, to form a matrix with rows equal to the number of treated subjects and columns equal to the number of control subjects. Finally, we take the absolute value of these differences.
+
+By default, `min.controls` or the minimum ratio of controls to treatments that is to be permitted within a matched set is zero, and `max.controls` or the maximum ratio of controls to treatments is infinite.
+
+Hansen found that in the context of a specific application, variable matching with a specific structure worked best; that is, each treated participant was matched to at least $\frac{.5(1 - \hat{P})}{\hat{P}}$ controls and at most $\frac{2(1 - \hat{P})}{\hat{P}}$ controls, where $\hat{P}$ represents the proportion of treated participants in the sample. In this example, $\hat{P} = \frac{274}{729 + 274} = 27.32\%$, so the number of minimum controls is $\frac{.5(1 - .2732)}{.2732} = 1.33$, and the number of maximum controls is $\frac{2(1 - .2732)}{.2732} = 5.32$.
+
+For `optmatch::pairmatch()`, we can set the number of controls to be matched to each treatment using the `controls` argument.
+
+```{r message=F, warning=F, error=F, results="hide"}
 attach(cds)
 prank <- rank(ps)
 names(prank) <- kid
 d1 <- outer(prank[kuse == 1], prank[kuse == 0], "-")
 d1 <- abs(d1)
+table(cds$kuse) # 729 control, 274 treated
+dim(d1) # 274 x 729
 
-# fullmatch fm
+# Full matching
 fm <- fullmatch(d1)
 (fm.d <- matched.distances(fm, d1, pres = TRUE))
 unlist(fm.d, max)
 
-# variable match, (vm1 - at least 1 at most 4)
+# Variable Matching (at least 1, at most 4)
 vm1 <- fullmatch(d1, min.controls = 1, max.controls = 4)
 (vm1.d <- matched.distances(vm1, d1, pres = TRUE))
 unlist(vm1.d, max)
 
-# variable match, (vm2 - at least 2 at most 4)
+# Variable Matching (at least 2, at most 4)
 vm2 <- fullmatch(d1, min.controls = 2, max.controls = 4)
 (vm2.d <- matched.distances(vm2, d1, pres = TRUE))
 unlist(vm2.d, max)
 
-# variable match, (vm3 - use Hensen's equation)
+# Variable Matching (using Hensen's equation)
 vm3 <- fullmatch(d1, min.controls = 1.33, max.controls = 5.32)
 (vm3.d <- matched.distances(vm3, d1, pres = TRUE))
 unlist(vm3.d, max)
 
-# variable match, (vm4 at least 2 at most 7)
+# Variable Matching (at least 2, at most 7)
 vm4 <- fullmatch(d1, min.controls = 2, max.controls = 7)
 (vm4.d <- matched.distances(vm4, d1, pres = TRUE))
 unlist(vm4.d, max)
 
-# pairmatch pm
+# 1:1 Pair Matching
 pm <- pairmatch(d1, controls = 1)
 (pm.d <- matched.distances(pm, d1, pres = TRUE))
 unlist(pm.d, max)
 ```
+
+Optimal matching aims to minimize the total sample distance of propensity scores. We can extract the distances of matched units from their matched counterpairs using `optmatch::matched.distances()` and then calculate the total distance using `sum(unlist())`. The ratio of treatment to control and the number of strata for each structure can be inspected with `optmatch::stratumStructure()`.
 
 ```{r message=F, warning=F, error=F}
 mean(unlist(fm.d))
@@ -717,58 +804,23 @@ print(table_5.10, n = 42)
 
 #### Hodges-Lehmann Aligned Rank Test 
 
+The Hodges-Lehmann aligned rank test can be used on matched samples created by full matching or variable matching. We used full matching and found that children who used AFDC had a letter-word identification score in 1997 that was on average 1.97 points lower than those who had never used AFDC; the difference was statistically significant at a $.05$ level (one-tailed). We used the Hodges-Lehmann test to gauge the statistical significance. The study also detected an effect size of .19, which is a small effect size in terms of Cohen's (1988) criteria.
+
 ```{r}
-df.h <- haven::read_dta("data/opt/chpt5_2(original).dta") %>%
-  mutate(fm_s = paste0(round(fm, 5), "s"))
-hodgesl(df.h, lwss97, fm_s, kuse)
+hodgesl(df, lwss97, fm, kuse)
 ```
 
 #### Cohen's d
 
-```{r include=F}
-# Shenyang Guo's Stata program, imbalance, version 8.2
-imbalance2 <- function(df, varname, treatname, blockname) {
-
-  # dx
-  df2 <- df %>%
-    group_by({{ treatname }}) %>%
-    summarise(m_x = mean({{ varname }}), sd_x = sd({{ varname }}), .groups = "drop")
-  mxt <- df2[2, 2]
-  mxc <- df2[1, 2]
-  s2xt <- df2[2, 3]^2
-  s2xc <- df2[1, 3]^2
-  sx <- sqrt((s2xt + s2xc) / 2)
-  dx <- as.numeric(abs(mxt - mxc) / sx)
-
-  # dx
-  df3 <- df %>%
-    group_by({{ blockname }}, {{ treatname }}) %>%
-    summarise(
-      m_x = mean({{ varname }}),
-      sd_x = sd({{ varname }}),
-      n = n(),
-      .groups = "drop"
-    )
-
-  mxc <- as.numeric(mean(filter(df3, {{ treatname }} == 0)$m_x))
-  mxt <- as.numeric(mean(filter(df3, {{ treatname }} == 1)$m_x))
-  dxm_num <- abs(mxt - mxc)
-  dxm <- as.numeric(dxm_num / sx)
-
-  return(list(dx = dx, dxm = dxm))
-}
-```
-
 ```{r}
-df.h2 <- haven::read_dta("data/opt/chpt5_2(original).dta")
-imbalance2(df.h2, lwss97, kuse, fm)$dxm # dxm for the outcome variable is Cohen's d
+imbalance2(df, lwss97, kuse, fm)$dxm # dxm for the outcome variable is Cohen's d
 ```
 
 ### Post-Matching Analysis Using Regression of Difference Scores
 
-```{r message=FALSE, warning=FALSE}
-df <- haven::read_dta("data/opt/chpt5_2.dta")
+A regression of difference scores may be performed on matched samples created by optimal pair matching. Based on the pair-matched sample, we first calculated difference scores between treated and control cases for each pair on all study variables (i.e., on the outcome variable and all covariates). We then regressed the difference score of the outcome on the difference scores of covariates. In addition, note that our model includes a correction for clustering effects (i.e., children are nested within caregivers) that we accomplished by using robust estimates of standard errors. The intercept of a difference score regression indicates the ATE of the sample. The estimated intercept from this model is -3.17 ($p < .05$). Thus, using pair matching and regression adjustment, the study found that, on average, children who used AFDC had a letter-word identification score in 1997 that was 3.17 points lower than do children who never used AFDC; this finding was statistically significant.
 
+```{r message=FALSE, warning=FALSE}
 # kuse == 1
 df1 <- df %>%
   select(pm, kuse,
@@ -785,7 +837,7 @@ df0 <- df %>%
   ) %>%
   filter(kuse == 0)
 
-# merge data
+# Merge Data
 df2 <- left_join(df0, df1, "pm")
 df2 <- df2 %>%
   mutate(
@@ -797,26 +849,39 @@ df2 <- df2 %>%
     mratio96 = mratio961 - mratio960
   )
 
-# regression
+# Regression of Difference Scores (one-tailed test)
 reg1 <- lm(y ~ male + black + age97 + pcged97 + mratio96, data = df2)
-broom::tidy(lmtest::coeftest(reg1, vcov = vcovCL, cluster = df2$pcg_id.x))
+broom::tidy(lmtest::coeftest(reg1, vcov = vcovCL, cluster = df2$pcg_id.x)) %>%
+  mutate(p.value.one.tailed = p.value / 2)
 ```
 
 ### Optimal Matching Using the MatchIt Package
 
-For an easier interface for the `optmatch` package, the `MatchIt::matchit()` function also implements optimal full matching and optimal pair matching with the `method = "full"` and `method = "optimal"` arguments, respectively. Variable ratio matching can be set with the `ratio` argument. However, for finer control of the matching process, use the functions `optmatch::fullmatch()` and `optmatch::pairmatch()`.
+For an easier interface for the `optmatch` package, the `MatchIt::matchit()` function also implements optimal full matching and optimal pair matching with the `method = "full"` and `method = "optimal"` arguments, respectively. Variable matching can be set using the `ratio`, `min.controls`, and `max.controls` arguments.
 
-Below is an illustration of optimal pair matching using generalized boosted model to generate the propensity scores:
+Below is an illustration of optimal pair matching (by default, 1:1 without replacement) using generalized boosted model to generate the propensity scores and then a regression model for the outcome that incorporates the matching weights. Here we find that on average children who used AFDC had a letter-word identification score in 1997 that was 4.14 points lower than do children who never used AFDC ($p < .001$).
 
 ```{r eval=F}
-pm2 <- matchit(
+# Optimal 1:1 Pair Matching Without Replacement Using GBM (ATT)
+set.seed(1000)
+(pm2 <- matchit(
   formula = kuse ~ pcg_adc + age97 + mratio96 + pcged97 + black,
   data = d,
   method = "optimal",
+  replace = F
   ratio = 1,
-  distance = "gbm"
-)
-bal.tab(pm2, binary = "std", un = T)
+  distance = "gbm",
+  estimand = "ATT"
+))
+
+# Regression with Matching Weights and Robust Standard Errors
+pm2.lm <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96, data = d, 
+             weights = pm2$weights)
+broom::tidy(lmtest::coeftest(pm2.lm, vcov = vcovCL, cluster = d$pcg_id))
+
+# Balance Checks
+bal.tab(pm2, binary = "std", un = T, threshold = c(m = .1))
+love.plot(pm2, un = T, threshold = c(m = .1))
 ```
 
 \newpage
@@ -824,7 +889,7 @@ bal.tab(pm2, binary = "std", un = T)
 
 ### Load Packages
 
-Propensity score weighting can be accomplished with base R. However, we need the `lmtest` and `sandwich` packages to estimate clustered covariance matrices in this example. Using these packages, we can obtain estimates and standard errors that are identical to Stata's `regress` program.
+Propensity score weighting can be accomplished with base R functions. However, we need the `lmtest` and `sandwich` packages to estimate clustered covariance matrices in this example. Using these packages, we can obtain estimates and standard errors that are identical to Stata's `regress` program.
 
 ```{r message=F, warning=F, error=F}
 library(lmtest)
@@ -847,7 +912,7 @@ Additionally, `pcg_id` is a cluster variable that identifies children nested wit
 
 ### Estimate ATE and ATT Weights
 
-Separate weights need to be calculated for estimating the average treatment effect (ATE) and the average treatment effect for the treated (ATT).
+Separate weights need to be calculated for estimating the average treatment effect (ATE) and the average treatment effect for the treated (ATT). Propensity score weighting for estimating ATE is generally referred to as the inverse probability of treatment weights (IPTW) estimator.
 
 For ATE, the weight estimates are calculated as follows for the treatment group:
 
@@ -1287,6 +1352,12 @@ imbalance <- function(df, varname, treatname, blockname) {
 
   return(list(dx = dx, dxm = dxm))
 }
+```
+
+## Example Usage
+
+```{r eval=F}
+imbalance(df, mratio96, kuse, fm)
 ```
 
 \newpage
