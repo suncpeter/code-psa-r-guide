@@ -605,13 +605,13 @@ d %>%
   select(-data, -wilcoxon, -ttest)
 
 # SMD Balance Checks
-c1 <- cobalt::bal.tab(
+(c1 <- cobalt::bal.tab(
   x = d %>% select(mratio96, pcged97, pcg_adc, black, age97, male),
   treat = d$kuse,
   binary = "std",
   threshold = c(m = .1),
   s.d.denom = "pooled"
-)
+))
 cobalt::love.plot(c1)
 ```
 
@@ -868,7 +868,7 @@ set.seed(1000)
   formula = kuse ~ pcg_adc + age97 + mratio96 + pcged97 + black,
   data = d,
   method = "optimal",
-  replace = F
+  replace = F,
   ratio = 1,
   distance = "gbm",
   estimand = "ATT"
@@ -880,8 +880,8 @@ pm2.lm <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96, data = d
 broom::tidy(lmtest::coeftest(pm2.lm, vcov = vcovCL, cluster = d$pcg_id))
 
 # Balance Checks
-bal.tab(pm2, binary = "std", un = T, threshold = c(m = .1))
-love.plot(pm2, un = T, threshold = c(m = .1))
+cobalt::bal.tab(pm2, binary = "std", un = T, threshold = c(m = .1))
+cobalt::love.plot(pm2, un = T, binary = "std", threshold = c(m = .1))
 ```
 
 \newpage
@@ -1025,7 +1025,7 @@ cobalt::bal.tab(
 cobalt::bal.tab(
   x = select(psw_df, male, black, age97, pcged97, mratio96),
   treat = psw_df$kuse,
-  weights = psw_df$ate_w,
+  weights = psw_df$att_w,
   binary = "std",
   continuous = "std",
   s.d.denom = "treated",
