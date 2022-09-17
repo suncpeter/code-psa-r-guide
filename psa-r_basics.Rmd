@@ -1042,13 +1042,12 @@ cobalt::bal.tab(
 
 ### Load Packages
 
-A variety of matching estimators are implemented in the `Matching` package. Because the assumptions about constant treatment effect and homoskedasticity may not be valid for certain types of data, we will also import the `lmtest` package for the Breusch-Pagan Test to check this assumption.
+A variety of matching estimators are implemented in the `Matching` package. Unlike the `MatchIt` package, which uses "subset selection" to arrive at a weighted subset of the units from the dataset, the `Matching` package uses "matching imputation" to impute potential outcomes using the observed outcomes of paired units.^[https://kosukeimai.github.io/MatchIt/articles/matching-methods.html] 
+
+Because the assumptions about constant treatment effect and homoskedasticity may not be valid for certain types of data, we will use the `lmtest` package for the Breusch-Pagan Test to check this assumption.
 
 ```{r message=F, warning=F, error=F}
 library(Matching)
-library(lmtest)
-library(broom)
-select <- dplyr::select
 ```
 
 Note that the `Matching::Match()` function is intended to be used in conjunction with the `MatchBalance()` function. However, functions from the `cobalt` package also work well and tend to be cleaner in presentation:^[https://cran.r-project.org/web/packages/cobalt/vignettes/cobalt_A1_other_packages.html#using-bal.tab-with-matching]
@@ -1158,9 +1157,9 @@ The `M` argument specifies the number of matches which should be found. The defa
 
 If `Var.calc = 0`, then homoskedasticity is assumed. Use `Var.calc = 4` to request the robust variance estimator using four matches. This algorithm developed by Abadie and Imbens (2002) includes a second matching procedure such that it matches treated units to treated units and control units to controls.
 
-The `estimand` argument is by default "ATT," but can be set to "ATE" or "ATC". Typically, we are interested in the ATE or ATT.
+The `estimand` argument is by default "ATT" but can be set to "ATE" or "ATC". Typically, we are interested in the ATE or ATT. The ATT seeks to answer questions such as "How would treated patients' outcomes differ, on average, had they not received treatment?"; the ATE is the treatment effect for both control and treated units; and the ATC, the average treatment effect for the controls, investigates the effect of the treatment for a population who did not receive treatment.^[https://arxiv.org/abs/2106.10577]
 
-The `sample` argument is a logical flag for whether the population or sample variance is returned. An example may help illustrate the difference between PATE and SATE: "While the
+The `sample` argument is a logical flag indicating whether the population or sample variance should be estimated. An example may help illustrate the difference between PATE and SATE: "While the
 SATE is useful for judging how a job-training program has affected a particular group of
 participants, the PATE can be used to evaluate whether another group of participants
 drawn from the same population is likely to benefit from the program."^[https://journals.sagepub.com/doi/pdf/10.1177/1536867X0400400307] In other words, the sample effect shows whether the program is successful in the sample at hand, while the population effect shows whether the same program would be successful in a second sample from the population.
@@ -1169,7 +1168,7 @@ Results from the `Matching::Match()` function are identical to Stata's `nnmatch`
 
 ### Define Outcome (Y), Treatment Index (Tr), and Variables to Match On (X)
 
-Use the `Y`, `Tr`, and `X`, arguments in the `Match()` function to specify the outcome, treatment index, and variables to match on, respectively.
+Use the `Y`, `Tr`, and `X`, arguments in the `Match()` function to specify the outcome vector, the treatment vector, and the matrix of variables to match on, respectively. The X matrix may or may not contain the propensity score.
 
 ```{r}
 me_Y <- me_df$pcss97
@@ -1179,7 +1178,7 @@ me_X <- select(me_df, male, black, age97, pcged97, mratio96, pcg_adc)
 
 ### Get Estimators Individually
 
-Note that by default matching is done with replacement. However, this can be changed with the `replace` argument.
+Note that by default matching is done with replacement. However, this can be changed with the `replace` argument. A matched dataset can be recovered by using the `index.treated` and `index.control` vectors. Further, `index.dropped` contains observations that have been dropped (e.g., due to a caliper setting).
 
 ```{r eval=F}
 # Sample Average Treatment Effect (SATE)
@@ -1188,6 +1187,10 @@ me1 <- Match(
   estimand = "ATE", sample = T
 )
 summary(me1)
+head(me1$index.treated)
+head(me1$index.control)
+head(me1$index.dropped)
+head(me1$se) # Abadie-Imbens standard error
 
 # Population Average Treatment Effect (PATE)
 summary(Match(
@@ -1261,15 +1264,15 @@ tribble(
 
 The results suggest that childhood poverty strongly affected children's academic achievement.
 
-**ATE:** On average, children who used AFDC in childhood had a passage comprehension score 4.7 units lower than that of children who had never used AFDC in childhood. This effect is statistically significant in the sample at hand ($p < .05$) as well as in a second sample drawn from the same population ($p < .05$).
+**ATE:** On average, children who used AFDC in childhood had a passage comprehension score 4.7 units lower than that of children who had never used AFDC in childhood. This effect is statistically significant in the sample at hand (SATE $p < .05$) as well as in a second sample drawn from the same population (PATE $p < .05$).
 
-**ATT:** With regard to the subpopulation of treated participants, on average, children who used AFDC in childhood had a passage comprehension score 5.2 units lower than that of children who had never used AFDC in childhood. This effect is statistically significant in the sample at hand ($p < .05$) as well as in a second sample drawn from the same population ($p < .05$).
+**ATT:** With regard to the subpopulation of treated participants, on average, children who used AFDC in childhood had a passage comprehension score 5.2 units lower than that of children who had never used AFDC in childhood. This effect is statistically significant in the sample at hand (SATT $p < .05$) as well as in a second sample drawn from the same population (PATT $p < .05$).
 
-**ATC:** Had all controls (i.e., children who never used AFDC) used AFDC and all treated children had not used AFDC, then on average, the control children would have a passage comprehension score 4.5 units lower than their counterparts ($p < .05$ for SATC and $p < .05$ for PATC).
+**ATC:** Had all controls (i.e., children who never used AFDC) used AFDC and all treated children had not used AFDC, then on average, the control children would have a passage comprehension score 4.5 units lower than their counterparts (SATC $p < .05$; PATC $p < .05$).
 
 Additional observations:
 
-1. A population effect indicates whether the tested intervention will be effective in a second sample taken from the same population. Taking SATT and PATT as examples, the study indicated that the treatment effect for the treated group was statistically significant in the sample at a level of .01. If we take a second sample from the population, we are likely to observe the same level of treatment effect for the treated, and the effect should remain statistically significant at a level of .01. The point estimate of the population effect is identical to the point estimate of its corresponding sample effect. A population effect differs from its corresponding sample effect on variance, and thus significance test on a population effect may have a different conclusion than that on its corresponding sample effect.
+1. A population effect indicates whether the tested intervention will be effective in a second sample taken from the same population. Taking SATT and PATT as examples, the study indicated that the treatment effect for the treated group was statistically significant in the sample at a level of .01. If we take a second sample from the population, we are likely to observe the same level of treatment effect for the treated, and the effect should remain statistically significant at a level of .01. The point estimate of the population effect is identical to the point estimate of its corresponding sample effect. A population effect differs from its corresponding sample effect on variance, and thus significance test on a population effect may have a different conclusion than that on its corresponding sample effect. Note that if treated units are discarded (e.g., due to a caliper), the estimand no longer estimates a particular population but rather only the average treatment effect on the remaining matched units (ATM).
 
 2. Note that in this study, SATT = -5.23 and SATC = -4.47, or a difference of 0.76 units. This difference is attributable either to additional selection bias that was not accounted for in the study or to study data that violated assumptions of matching estimators, which suggests the need for further scrutiny.
 
