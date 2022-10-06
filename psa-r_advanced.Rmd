@@ -232,7 +232,7 @@ In Subclass 3, the chi-square test on "AOD treatment receipt" is statistically s
 As the above balance checks show, the dataset violates the overlap assumption. In other words, there may be parts of the covariate space with limited number of observations for either the treatment or control group. To address the problem of limited overlap, we can follow Crump et al. (2009) and pursue a trimming strategy. This involves searching for a cutoff value and then discarding participants whose estimated propensity scores are below the cutoff value or above one minus the cutoff value. Alternatively, Crump et al., 2009 suggests that a rule of thumb is to use .1 as the cutoff value and to discard all observations with estimated propensity scores outside the range [0.1, 0.9].
 
 ```{r}
-# Program to search best cutoff value for overlap (Crum et al., 2009)
+# Program to search best cutoff value for overlap (Crump et al., 2009)
 trim <- PSweight::PStrim(
   data = as.data.frame(df.ps), # fix for latest package update
   ps.formula = f,
@@ -301,11 +301,11 @@ subs_t %>%
 ## Outcome Analysis by Subclass
 
 ```{r}
-f2 <- as.formula(paste0(
+(f2 <- as.formula(paste0(
   "Surv(durm, rrpt) ~ aodserv + married + high + bahigh + ",
   "poverty2 + poverty3 + poverty4 + poverty5 + employ + open + black + ",
   "hispanic + natam + chdage1 + chdage2 + chdage3 + CRA47A"
-))
+)))
 subs_t %>%
   group_map(~ broom::tidy(survival::coxph(f2, .x)))
 ```
@@ -380,7 +380,7 @@ cobalt::love.plot(mm, binary = "std", disp.subclass = T, threshold = c(m = .1))
 cobalt::bal.tab(mm, un = T, binary = "std", disp.subclass = T, threshold = c(m = .1))
 
 # With trimmed dataset & outcome analysis with MMWS
-(mm2 <- MatchIt::matchit(f, df.trimmed, method = "subclass", subclass = 5))
+(mm2 <- MatchIt::matchit(f, df.trimmed, method = "subclass", subclass = 5)) # ATT
 table(mm2$subclass)
 mm2$q.cut # vector of propensity score cutpoints to define subclasses
 cobalt::love.plot(mm2, binary = "std", disp.subclass = T, threshold = c(m = .1))
