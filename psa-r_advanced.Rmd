@@ -30,7 +30,7 @@ options(scipen = 999)
 
 The advantages of propensity score subclasification are: (1) allows analysis of an outcome variable that is virtually any type; and (2) retains a large size of the original sample. The disadvantage is that it is sensitive to the violation of the overlapping assumption.
 
-This lab illustrates propensity score subclassification followed by a multivariate outcome analyis using a Cox proportional hazards model.^[Perkins, S. M., Tu, W., Underhill, M. G., Zhou, X. H., & Murray, M. D. (2000). The use of propensity scores in pharmacoepidemiologic research. *Pharmacoepidemiology and Drug Safety*, 9(2), 93–101. https://doi.org/10.1002/(SICI)1099-1557(200003/04)9:2<93::AID-PDS474>3.0.CO;2-I]
+This lab illustrates propensity score subclassification followed by a multivariate outcome analyis using a Cox proportional hazards model.
 
 We will demonstrate five steps of subclassification:
 
@@ -60,7 +60,7 @@ library(sandwich)
 
 ## Import Data
 
-THis dataset contains 2,758 children from the panel data of the National Survey of Child and Adolescent Well-Being (NSCAW). After a listwise deletion of missing data, the study sample comprises 2,723 children. 
+This dataset contains 2,758 children from the panel data of the National Survey of Child and Adolescent Well-Being (NSCAW). After a listwise deletion of missing data, the study sample comprises 2,723 children.^[Guo, S., Barth, R. P., & Gibbons, C. (2006). Propensity score matching strategies for evaluating substance abuse services for child welfare clients. *Children and Youth Services Review*, *28*(4), 357–383. https://doi.org/10.1016/j.childyouth.2005.04.012]
 
 The research question is whether caregivers' use of substance abuse services (`aodserv`) is predictive of the timing (`durm`) of a maltreatment re-report (`rrpt`) 18 months after the baseline interview. Of the 2,723 children included in the study, 294 (10.8%) had female caregivers who received substance abuse treatment, and the remaining 2,429 (89.2%) had female caregivers who did not receive treatment services.
 
