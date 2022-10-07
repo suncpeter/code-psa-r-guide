@@ -396,9 +396,9 @@ exp(0.281)
 
 ## Modeling Doses of Treatment With Multiple Balancing Scores Estimated by a Multinomial Logit Model
 
-In this example, the treatment dosage is the categorized percentage of time a child used Aid to Families with Dependent Children (AFDC) from birth to current age in 1997. The outcome variable is academic achievement. We hypothesize that an increase in levels of using AFDC decreases academic achievement in a linear fashion. 
+In this example, the treatment dosage is the categorized percentage of time a child used Aid to Families with Dependent Children (AFDC) from birth to current age in 1997 (`tx0` and `tx1`). The outcome variable is academic achievement. as measured by the letter-word identification score in 1997 (`lwss97`). We hypothesize that an increase in levels of using AFDC decreases academic achievement in a linear fashion. 
  
-After examining the distribution of percentages of time using AFDC from birth to current age, we create three dose groups: never used, 1% to 33.9% of the time using AFDC from birth to current age in 1997, and 34% to 100% of the time using AFDC from birth to current age in 1997. 
+After examining the distribution of percentages of time using AFDC from birth to current age, we create three dose groups: never used, 1% to 33.9% of the time using AFDC from birth to current age in 1997, and 34% to 100% of the time using AFDC from birth to current age in 1997.
 
 ### Load Packages
 
@@ -414,7 +414,7 @@ library(sandwich)
 
 ```{r}
 # Load Data
-d <- haven::read_dta("data/adv/chpt10.dta")
+df <- haven::read_dta("data/adv/chpt10.dta")
 
 # Function to replicate Stata tab
 tab <- function(df, var) {
@@ -431,41 +431,47 @@ tab <- function(df, var) {
 
 ### Create Treatment Variable
 
-In this example, we treated the highest dosage category as the reference group:
+In this example, we treated the highest dosage category (i.e., 34% to 100% of the time using AFDC from birth to current age in 1997) as the reference group:
 
 ```{r message=FALSE, warning=FALSE}
-tab(d, k_adc)
+tab(df, k_adc)
 
-# Treatment
-d <- d %>%
-  mutate(kadc_ds = factor(
+# Categorize the Continuous Treatment k_adc
+df <- df %>%
+  mutate(tx = factor(
     case_when(
       k_adc == 0 ~ 0,
       k_adc > 0 & k_adc < 34 ~ 1,
       k_adc >= 34 ~ 2
     ), levels = c(2, 0, 1)))
+levels(df$tx)
+```
 
-tab(d, kadc_ds)
-levels(d$kadc_ds)
+The distribution of the three doses are shown below:
+
+```{r}
+tab(df, tx)
 ```
 
 ### Generalized Propensity Scores
 
 #### Mulitinomial Logit Model
 
-To investigate the impact of doses on academic achievement, we employ Imbens's (2000) method. A multinomial logit model was first estimated. Variables showing statistically significant differences from bivariate analyses were entered into the multinomial model as predictors.
+To investigate the impact of doses on academic achievement, we employ Imbens's (2000) method. A multinomial logit model was first estimated and the predicted probabilities obtained via the `fitted()` function. Variables showing statistically significant differences from bivariate analyses were entered into the multinomial model as predictors.
+
+We obtain three scores for each child, and each score indicates the generalized propensity of never using AFDC, the generalized propensity of using AFDC for 1% to 33.9% of the time, and the generalized propensity of using AFDC for 34% to 100% of the time.
 
 ```{r message=FALSE, warning=FALSE}
 # Use multinomial logit model to predict generalized propensity scores
-m <- nnet::multinom(
-  kadc_ds ~ pcg_adc + age97 + mratio96 + pcged97 + black,
-  data = d
+m1 <- nnet::multinom(
+  tx ~ pcg_adc + age97 + mratio96 + pcged97 + black,
+  data = df
 )
-summary(m)
+summary(m1)
 
 # Save model predicted probabilities
-head(fitted(m))
-pr <- fitted(m) %>%
+head(fitted(m1))
+pr <- fitted(m1) %>%
   as_tibble() %>%
   setNames(c("pr2", "pr0", "pr1"))
 head(pr)
@@ -474,17 +480,17 @@ summary(pr)
 
 ### Sampling Weights
 
-Note that even though each participant has three GPSs, the GPS for the dose category each participant actually used is chosen for the weighted analysis. Below is the key syntax to create the weight variable. It is important to note that the GPS itself is not the weight; the inverse of a specific GPS is defined as a weight. 
+Note that even though each participant has three generalized propensity scores (GPS), the GPS for the dose category each participant actually used is chosen for the weighted analysis. Below is the key syntax to create the weight variable (`dose_w`). It is important to note that the GPS itself is not the weight; the inverse of a specific GPS is defined as a weight. 
 
 ```{r message=FALSE, warning=FALSE}
-# define inverse of the generalized p-scores as sampling weights
-d <- d %>%
+# Define inverse of the generalized p-scores as sampling weights
+df <- df %>%
   mutate(dose_w = case_when(
-    kadc_ds == 0 ~ 1 / pr$pr0,
-    kadc_ds == 1 ~ 1 / pr$pr1,
-    kadc_ds == 2 ~ 1 / pr$pr2
+    tx == 0 ~ 1 / pr$pr0,
+    tx == 1 ~ 1 / pr$pr1,
+    tx == 2 ~ 1 / pr$pr2
   ))
-summary(d$dose_w)
+summary(df$dose_w)
 ```
 
 ### Dummy Variables
@@ -492,51 +498,49 @@ summary(d$dose_w)
 Next, we create dummy variables for the outcome analysis. For a study with three dosage categories, we create $d - 1 = 3 - 1 = 2$ dummy variables. These variables then are entered into the outcome analysis. In this example, the outcome analysis is a weighted regression.
 
 ```{r message=FALSE, warning=FALSE}
-# create t-1 dummy variables to measure dose categories
-d <- d %>%
+# Create t-1 dummy variables to measure dose categories
+df <- df %>%
   mutate(
-    kadc_ds0 = ifelse(kadc_ds == 0, 1, 0),
-    kadc_ds1 = ifelse(kadc_ds == 1, 1, 0)
+    tx0 = ifelse(tx == 0, 1, 0),
+    tx1 = ifelse(tx == 1, 1, 0)
   )
 
-tab(d, kadc_ds0)
-tab(d, kadc_ds1)
+tab(df, tx0)
+tab(df, tx1)
 ```
 
-### Regression
+### Regression Analysis
 
-#### Without Control
+#### With Propensity Score Adjustment
 
-```{r}
-# Regression does not control for selection
-reg1 <- lm(lwss97 ~ male + black + age97 + pcged97 + mratio96 + pcg_adc + kadc_ds0 +
-  kadc_ds1, data = d)
-lmtest::coeftest(reg1, vcovCL, cluster = d$pcg_id)
-```
-
-#### With Control
-
-The results of the regression with propensity score adjustments show that, other things being equal, (a) "using AFDC 1% to 33.9% of the time" decreases the academic achievement from "never used" by 4.19 units (i.e., $7.48 - 3.29 = 4.19$), (b) "using AFDC 34% to 100% of the time" decreases the academic achievement from "using AFDC 1% to 33.9% of the time" by 3.29 units, and (c) "using AFDC 34% to 100% of the time” decreases the academic achievement from "never used" by 7.48 units. All differences are statistically significant at a .05 level from a one-tailed test. Thus, the results confirm a linear impact of doses of using AFDC on academic achievement: The longer the time a study child was exposed to poverty, the lower his or her academic achievement. Such a conclusion cannot be drawn by analyses treating the child’s use of AFDC as a binary variable. 
+The results of the regression with propensity score adjustments show that, other things being equal, (a) "using AFDC 1% to 33.9% of the time" decreases the academic achievement from "never used" by 4.19 units (i.e., $7.48 - 3.29 = 4.19$), (b) "using AFDC 34% to 100% of the time" decreases the academic achievement from "using AFDC 1% to 33.9% of the time" by 3.29 units, and (c) "using AFDC 34% to 100% of the time” decreases the academic achievement from "never used" by 7.48 units. All differences are statistically significant at a .05 level from a one-tailed test. Thus, the results confirm a linear impact of doses of using AFDC on academic achievement: The longer the time a study child was exposed to poverty, the lower his or her academic achievement. Such a conclusion cannot be drawn by analyses treating the child's use of AFDC as a binary variable. 
 
 ```{r}
 # Regression controls for selection using inverse p-scores as weights
-reg2 <- lm(lwss97 ~ male + black + age97 + pcged97 + mratio96 + pcg_adc + kadc_ds0 +
-  kadc_ds1, weights = dose_w, data = d)
-lmtest::coeftest(reg2, vcovCL, cluster = d$pcg_id)
+m3 <- lm(lwss97 ~ male + black + age97 + pcged97 + mratio96 + pcg_adc + tx0 + tx1,
+         weights = dose_w, data = df)
+lmtest::coeftest(m3, vcovCL, cluster = df$pcg_id)
+```
+
+#### Without Propensity Score Adjustment
+
+In contrast, the regression model without propensity score adjustments showed the impact of poverty in a lesser amount for all possible contrasts, and only one of the two treatment variables was statistically significant. This exemplifies, in a sense, the importance of controlling for covariates using propensity scores. Together, the analyses show that modeling multiple doses of treatment is informative. It allows us to test research hypotheses not only centering on treatment effectiveness but also concerning the impact of dose levels.
+
+```{r}
+# Regression does not control for selection
+m2 <- lm(lwss97 ~ male + black + age97 + pcged97 + mratio96 + pcg_adc + tx0 +
+  tx1, data = df)
+lmtest::coeftest(m2, vcovCL, cluster = df$pcg_id)
 ```
 
 \newpage
 ## The Hirano and Imbens Estimator
 
+### Load Package
+
 The package `causaldrf` implements the Hirano and Imbens estimator in R, but some of the arguments are different from those in Stata and therefore yield different results.
 
-### Load Libraries
-
-The package `causaldrf` can be installed using the commented commands:
-
 ```{r}
-# require(devtools)
-# install_version("causaldrf", version = "0.3", repos = "http://cran.us.r-project.org")
 library(causaldrf)
 ```
 
@@ -550,6 +554,9 @@ We first excluded all participants with a zero dosage (i.e., `k_adc == 0`). We t
 # Load Data
 df <- haven::read_dta("data/adv/chpt10.dta")
 #stem(df$k_adc)
+
+# Kolmogorov-Smirnov test
+ks.test(df$k_adc, "pnorm")
 
 # Manipulate Data
 df2 <- df %>%
@@ -579,6 +586,8 @@ grid_val_values
 
 ### Estimate Median Treatment of Each Group
 
+The function `hi_est()` estimates the GPS function and the ADRF.
+
 ```{r}
 hi_list0 <- causaldrf::hi_est(
   Y = Y,
@@ -594,7 +603,7 @@ hi_sum0 <- summary(hi_list0)
 
 ### Estimate the Average Dose Response Function (ADRF)
 
-We now moved to the last stage to estimate the dose response function and treatment effect function (i.e., the estimated derivative). Note: we specified a 10-unit increment of the treatment dosage for the x-axis in the plots.
+We now move to the last stage to estimate the dose response function and treatment effect function (i.e., the estimated derivative). Note: we specified a 10-unit increment of the treatment dosage for the x-axis in the plot using the `grid_val()` argument.
 
 ```{r message=FALSE, warning=FALSE, error=FALSE}
 hi_list <- causaldrf::hi_est(
@@ -603,13 +612,15 @@ hi_list <- causaldrf::hi_est(
   treat_formula = treat ~ pcg_adc + age97 + male + black + mratio96 + pcged97,
   outcome_formula = Y ~ treat + I(treat^2) + gps + I(gps^2) + treat * gps,
   data = df2,
-  grid_val = seq(10, 100, by = 10), # grid_val_values
+  grid_val = seq(10, 100, by = 10),
   treat_mod = "LogNormal"
 )
 hi_sum <- summary(hi_list)
 ```
 
 ### Plot ADRF
+
+The dose-response functions show that children who used the welfare program 10% to 30% of the time from birth to 1997 have a letter-word identification score around 95; after the 30% threshold, an increase in using the welfare program decreases the letter-word identification score, and the lowest achievement score is linked to children who used the welfare program 60% of the time; after the 60% threshold, the letter-word identification score gradually increases with every unit increase in the level of using the welfare program. The achievement for children who used AFDC 100% of the time recovers to the level around 95 or, more precisely, to the level of 96. The results suggest that for children with high AFDC participation (i.e., more consistently in poverty during childhood), academic achievement stabilizes at a higher level compared to children who used the welfare program about 60% of the time (i.e., were inconsistently in poverty). The findings may suggest that children who were stably on AFDC did better than children who experienced the trauma of cycling into and out of poverty. In other words, given the findings, one may wonder if the trauma of going in and out of AFDC implies a more chaotic childhood.
 
 ```{r plot, message=FALSE, warning=FALSE, error=FALSE}
 adrf <- tibble(
