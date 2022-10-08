@@ -717,7 +717,7 @@ summary(df.sa)
 
 ### Rosenbaum Bounds for Sign Rank
 
-Below, we see the range of significance levels for the test statistic when $\Gamma$ is equal to various values. As depicted, $\Gamma = 4.25$ is the value at which the significance interval becomes uninformative. Rosenbaum (2002) interpreted this finding in the following way: "The table shows that to explain away the observed association between parental exposure to lead and child’s lead level, a hidden bias or unobserved covariate would need to increase the odds of exposure by more than a factor of $\Gamma = 4.25$" (p. 115).
+Below, we see the range of significance levels for the test statistic when $\Gamma$ is equal to various values. As depicted, $\Gamma = 4.25$ is the value at which the significance interval becomes uninformative. Rosenbaum (2002) interpreted this finding in the following way: "The table shows that to explain away the observed association between parental exposure to lead and child's lead level, a hidden bias or unobserved covariate would need to increase the odds of exposure by more than a factor of $\Gamma = 4.25$" (p. 115).
 
 ```{r message=FALSE, warning=FALSE}
 p <- rbounds::psens(df.sa$trt, df.sa$ctrl, GammaInc = 0.25)
@@ -729,7 +729,7 @@ Note that there are additional functions available in the `rbounds` package, suc
 
 ## Example of Sensitivity Analysis & Pair Matching
 
-A study using regression analysis of difference scores found that in 1997, children who used AFDC had an average letter-word identification score that was 3.17 points lower than that of children who never used AFDC ($p < .05$). Furthermore, the study adjusted selection based on six observed variables (i.e., the ratio of family income to poverty threshold in 1996, caregiver’s education in 1997, caregiver’s history of using welfare, child race, child age in 1997, and child gender). We now examine the same data in an attempt to determine to what extent is this study sensitive to hidden selection bias. 
+A study using regression analysis of difference scores found that in 1997, children who used AFDC had an average letter-word identification score (`lwss97`) that was 3.17 points lower than that of children who never used AFDC ($p < .05$). Furthermore, the study adjusted selection based on six observed variables (i.e., the ratio of family income to poverty threshold in 1996, caregiver’s education in 1997, caregiver’s history of using welfare, child race, child age in 1997, and child gender). We now examine the same data in an attempt to determine to what extent is this study sensitive to hidden selection bias. 
  
 Results of the sensitivity analysis are shown below. Using the Wilcoxon's signed-rank test, the sensitivity analysis shows that the study becomes sensitive to hidden bias at $\Gamma = 1.43$. Because 1.43 is a small value, we can conclude that the study is very sensitive to hidden bias, and therefore, further analysis that controls for additional biases is warranted.
 
