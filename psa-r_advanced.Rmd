@@ -672,20 +672,19 @@ Post-adjustment balance checks can be conducted by following the procedure in Ga
 \newpage
 # Section 6.4: Computer Lab: Running Sensitivity Analysis with rbounds
 
+Sensitivity analysis seeks to answer the question: How sensitive are findings to hidden bias? In this section, we demonstrate how to carry out Rosenbaum's approach to sensitivity analysis.
+
 ## Sensitivity Analysis of the Effects
 
-Steps in conducting the sensitivity analysis for matched pair study:
+The steps in conducting the sensitivity analysis for a matched pair study are as follows:
 
-1. Arrange data (i.e., the outcome variable) by pair, list the value of outcome 
-variable for the treated and control units separately, and take the difference 
-between the two values at the pair level; 
+1. Arrange the data (i.e., the outcome variable) in pairs, then list the value of outcome variable for the treated and control units separately, and take the difference between the two values at the pair level; 
 
-2. Using the Wilcoxon’s signed-rank test to calculate the lower and upper bounds of 
-p values when $\Gamma = 1$; 
+2. Use the Wilcoxon's signed-rank test to calculate the lower and upper bounds of p-values when $\Gamma = 1$; 
 
-3. Repeat Step 2 for different values of $\Gamma$; that is, calculate the lower and upper bounds of p values when $\Gamma = 2, 3, \cdots$ until a $\Gamma$ value at which the p value is > .05; this is the $\Gamma$ value at which the significance interval becomes uninformative. The $\Gamma$ value so obtained is the measure of sensitivity to hidden bias. A large $\Gamma$ is good, meaning that the study is insensitive to hidden selection bias. 
+3. Repeat Step 2 for different values of $\Gamma$; that is, calculate the lower and upper bounds of p-values when $\Gamma = 2, 3, \cdots$ until a $\Gamma$ value at which the p-value is > .05; this is the $\Gamma$ value at which the significance interval becomes uninformative. The $\Gamma$ value so obtained is the measure of sensitivity to hidden bias. A large $\Gamma$ is good, meaning that the study is insensitive to hidden selection bias.
 
-#### Load Packages
+### Load Packages
 
 We will use the package `rbounds` for the sensitivity analysis and `coin` for the Wilcoxon signed-rank test.
 
@@ -695,9 +694,9 @@ library(coin)
 library(kableExtra)
 ```
 
-#### Load Data
+### Load Data
 
-The data below contains blood lead levels (ug/dl) of children whose parents are exposed to lead at their places of work (`trt`), versus children whose parents are unexposed to lead at their places of work (`ctrl`):
+The data below contains blood lead levels (ug/dl) of children whose parents were exposed to lead at their places of work (`trt`), versus children whose parents were not exposed to lead at their places of work (`ctrl`):
 
 ```{r message=FALSE, warning=FALSE}
 # Data: Matched Data of Lead Blood Levels in Children
@@ -711,25 +710,28 @@ df.sa <- tibble(
     16, 18, 18, 24, 19, 11, 10, 15, 16, 18, 18, 13, 19, 10, 16, 16, 24, 13, 9,
     14, 21, 19, 7, 18, 19, 12, 11, 22, 25, 16, 13, 11, 13
   )
-) %>%
-  rowid_to_column(var = "pair") %>%
-  mutate(diff = trt - ctrl)
+)
 head(df.sa)
+summary(df.sa)
 ```
+
+### Rosenbaum Bounds for Sign Rank
 
 Below, we see the range of significance levels for the test statistic when $\Gamma$ is equal to various values. As depicted, $\Gamma = 4.25$ is the value at which the significance interval becomes uninformative. Rosenbaum (2002) interpreted this finding in the following way: "The table shows that to explain away the observed association between parental exposure to lead and child’s lead level, a hidden bias or unobserved covariate would need to increase the odds of exposure by more than a factor of $\Gamma = 4.25$" (p. 115).
 
 ```{r message=FALSE, warning=FALSE}
-p <- rbounds::psens(df.sa$trt, df.sa$ctrl, GammaInc = 0.01)
+p <- rbounds::psens(df.sa$trt, df.sa$ctrl, GammaInc = 0.25)
 p$bounds %>%
   filter(Gamma %in% c(1:4, 4.25, 5:6))
 ```
 
-## Section 11.5.2 Sensitivity Analysis & Pair Matching
+Note that there are additional functions available in the `rbounds` package, such as `rbounds::hlsens()`, which will calculate the Rosenbaum bounds for continuous or ordinal outcomes based on Hodges-Lehmann point estimate.
+
+## Example of Sensitivity Analysis & Pair Matching
 
 A study using regression analysis of difference scores found that in 1997, children who used AFDC had an average letter-word identification score that was 3.17 points lower than that of children who never used AFDC ($p < .05$). Furthermore, the study adjusted selection based on six observed variables (i.e., the ratio of family income to poverty threshold in 1996, caregiver’s education in 1997, caregiver’s history of using welfare, child race, child age in 1997, and child gender). We now examine the same data in an attempt to determine to what extent is this study sensitive to hidden selection bias. 
  
-Results of the sensitivity analysis are shown below. Using the Wilcoxon’s signed-rank test, the sensitivity analysis shows that the study becomes sensitive to hidden bias at $\Gamma = 1.43$. Because 1.43 is a small value, we can conclude that the study is very sensitive to hidden bias, and therefore, further analysis that controls for additional biases is warranted.
+Results of the sensitivity analysis are shown below. Using the Wilcoxon's signed-rank test, the sensitivity analysis shows that the study becomes sensitive to hidden bias at $\Gamma = 1.43$. Because 1.43 is a small value, we can conclude that the study is very sensitive to hidden bias, and therefore, further analysis that controls for additional biases is warranted.
 
 ```{r message=FALSE, warning=FALSE}
 # Import data and pivot data from long to wide
@@ -742,6 +744,7 @@ d <- haven::read_dta("data/adv/chpt5_2.dta") %>%
   mutate(kuse = recode(kuse, `0` = "y0", `1` = "y1")) %>%
   pivot_wider(names_from = kuse, values_from = lwss97) %>%
   ungroup()
+head(d)
 ```
 
 ```{r message=FALSE, warning=FALSE}
@@ -753,10 +756,11 @@ p1$bounds %>%
 We use the Wilcoxon signed rank test to test the significance of y. The results show that the randomization test assuming no hidden bias is highly significant ($z = -4.191$, $p < .001$). That is, there is a strong treatment effect. 
 
 ```{r message=FALSE, warning=FALSE}
+shapiro.test(d$y1) # non-normal, therefore Wilcoxon signed rank test
 coin::wilcoxsign_test(y1 ~ y0, data = d)
 ```
 
-We can further compare the level of sensitivity to bias of the AFDC study to that of other studies. The table below presents results of sensitivity analyses for four observational studies (Rosenbaum, 2005, table 4). Among the four studies, Study 2 is the least sensitive to hidden bias; the study of the effects of diethylstilbestrol becomes sensitive at about $\Gamma = 7$. In contrast, Study 4 is the most sensitive to hidden bias; the study of the effects of coffee becomes sensitive at about $\Gamma = 1.3$. 
+We can further compare the level of sensitivity to bias of the AFDC study to that of other studies. The table above presents results of sensitivity analyses for four observational studies (Rosenbaum, 2005, table 4). Among the four studies, Study 2 is the least sensitive to hidden bias; the study of the effects of diethylstilbestrol becomes sensitive at about $\Gamma = 7$. In contrast, Study 4 is the most sensitive to hidden bias; the study of the effects of coffee becomes sensitive at about $\Gamma = 1.3$. 
 
 ```{r echo=F}
 tibble(
