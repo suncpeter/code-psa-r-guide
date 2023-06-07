@@ -249,7 +249,7 @@ The `haven` and `sjlabelled` packages are used to load and clean Stata data file
 ```{r message=F, warning=F, error=F}
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(
-  haven, sjlabelled, cobalt, MatchIt, tidyverse, kableExtra, survival, psych
+  haven, sjlabelled, cobalt, MatchIt, tidyverse, kableExtra, survival, psych, here
 )
 ```
 
@@ -261,7 +261,7 @@ This data is a sample of 2,758 children from the National Survey of Child and Ad
 
 ```{r echo=T, results="hide"}
 # Load Data
-gm_df0 <- haven::read_dta("data/chpt5_1_original.dta")
+gm_df0 <- haven::read_dta(here("data", "chpt5_1_original.dta"))
 
 # Inspect Data
 str(gm_df0)
@@ -509,7 +509,7 @@ After importing the data, missing data is deleted listwise, and the data is sort
 
 ```{r}
 set.seed(1000)
-gbr_df <- read_dta("data/g3aca1.dta") %>%
+gbr_df <- read_dta(here("data", "g3aca1.dta")) %>%
   haven::zap_formats() %>%
   sjlabelled::remove_all_labels() %>%
   as_tibble() %>%
