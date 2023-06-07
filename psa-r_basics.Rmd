@@ -201,9 +201,9 @@ imbalance2 <- function(df, varname, treatname, blockname) {
 \newpage
 # Conceptual Review
 
-**Causal inference** is inference about *counterfactual outcomes* or *potential outcomes*.
+**Causal inference** is inference about *counterfactual outcomes* or *potential outcomes*. An example of a counterfactual is: What would have happened to the treated subjects, had they not received treatment?
 
-(*Notation:* Let $w$ represent the dichotomous treatment variable, where 1 = treated and 0 = untreated, let $Y$ represent a dichotomous outcome variable. Thus, $Y_{1i}$ is the potential outcome for unit $i$ with treatment, and $Y_{0i}$ is the potential outcome for unit $i$ without treatment.)
+(*Notation:* Let $w$ represent a dichotomous treatment variable, where 1 = treated and 0 = untreated, let $Y$ represent a dichotomous outcome variable. $Y_{1i}$ is the potential outcome for unit $i$ with treatment, and $Y_{0i}$ is the potential outcome for unit $i$ without treatment.)
 
 An **individual causal effect** is given by:
 
@@ -241,6 +241,8 @@ $$
 # 3.5 Computer Lab: Running Greedy Matching and GBR with R
 
 ## Greedy Nearest Neighbor Matching
+
+Greedy nearest neighbor matching forms matches by pairing a control participant with a treated participant, if the absolute difference of their propensity scores is the smallest among all possible pairs of propensity scores (i.e., they are similar on their covariates). If a caliper is used, then a match is made only if the absolute difference is less than the caliper.
 
 ### Load Packages
 
@@ -362,15 +364,13 @@ cobalt::love.plot(
 \newpage
 ### Greedy Nearest Neighbor Matching Without Replacement
 
-Greedy nearest neighbor matching forms matches by pairing a control participant with a treated participant, if the absolute difference of their propensity scores is the smallest among all possible pairs of propensity scores.
-
-By default, the `MatchIt::matchit()` function performs greedy nearest neighbor matching without replacement, therefore the `method = "nearest"` and `replace = F` arguments do not need to be specified. Non-replacement means that once a treated case is matched to a non-treated case, both cases are removed from the pool.
+By default, the `MatchIt::matchit()` function performs greedy nearest neighbor matching without replacement, therefore the `method = "nearest"` and `replace = F` arguments do not need to be specified. Non-replacement means that once a treated case is matched to a non-treated case, both cases are removed from the pool. Matching with replacement allows each control unit to be matched with any number of treated units.
 
 To avoid dissimilar matches, we can constrain matches so that the absolute distance of propensity scores between two participants is less than a specified tolerance for matching or a caliper. The width of the caliper is by default in standard deviation units and can be specified using the `caliper` argument. A wide caliper may result in more matches and a larger sample, but inexact matching may occur as indicated by large distances on the propensity score between the treated and nontreated cases. Using varying caliper sizes can test the sensitivity of the findings. Here we use a caliper size of a quarter of a standard deviation, which is suggested by Rosenbaum and Rubin (1985).
 
 The order of the matching can be specified using the `m.order` argument. If this argument is set to `largest`, then matching begins with the treated subject with the highest propensity score; if set to `smallest`, then matching takes places in ascending order of the distance measures; and if `random`, matching takes place in a random order. "The default is to go in descending order from the highest propensity score; doing so allows the units that would have the hardest time finding close matches to be matched first."^[https://kosukeimai.github.io/MatchIt/articles/matching-methods.html]
 
-Finally, the logit of the predicted probability from a logistic regression model can be supplied to the `distance` argument. The logit of the predicted probability is used, because the logit is approximately normally distributed.
+Finally, the logit of the predicted probability from a logistic regression model can be supplied to the `distance` argument. The logit of the predicted probability is used, because the logit is approximately normally distributed. To calculate this automatically, set `distance="glm"` and `link="logit"`.
 
 The choice of explanatory variables (i.e., conditioning variables) in the model predicting propensity scores of service receipt serves a paramount role in the propensity score analysis. We chose these variables based on a review of substance abuse literature to determine what characteristics were associated with treatment receipt:
 
@@ -451,7 +451,7 @@ cobalt::bal.tab(gm_out,
 \newpage
 ### Greedy Nearest Neighbor Mahalanobis Distance Matching Without Replacement
 
-Here we perform Mahalanobis distance matching without replacement and without including an estimated propensity score.
+Here we perform Mahalanobis distance matching without replacement and without including estimated propensity scores by setting the `distance` argument to "mahalanobis." If propensity scores need to be estimated, the argument `mahvars` can be used to specify the variables used to create the Mahalanobis distance, while the `distance` argument should be either a vector of the propensity scores or whatever method is desired for estimating the propensity scores.
 
 ```{r}
 set.seed(1000)
@@ -621,6 +621,10 @@ cobalt::love.plot(gbr_m2,
 ) +
   labs(title = "Covariate Balance (ATE)")
 ```
+
+### Other Packages
+
+GBR is also implemented in the `MatchIt::matchit()` and `twang::ps()` functions. While the `gbm` package is used in both, each function uses a different set of default arguments. See their respective help files for more details.
 
 \newpage
 # 4.7 Computer Lab: Imbalance Check and Outcome Analysis with R after optmatch
