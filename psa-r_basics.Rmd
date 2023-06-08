@@ -201,6 +201,8 @@ imbalance2 <- function(df, varname, treatname, blockname) {
 \newpage
 # Conceptual Review
 
+## Basic Ideas
+
 **Causal inference** is inference about *counterfactual outcomes* or *potential outcomes*. An example of a counterfactual is: What would have happened to the treated subjects, had they not received treatment?
 
 (*Notation:* Let $w$ represent a dichotomous treatment variable, where 1 = treated and 0 = untreated, let $Y$ represent a dichotomous outcome variable. $Y_{1i}$ is the potential outcome for unit $i$ with treatment, and $Y_{0i}$ is the potential outcome for unit $i$ without treatment.)
@@ -236,6 +238,46 @@ The **propensity score** is the probability of receiving the treatment given a v
 $$
 \pi(X_i) \equiv \text{Pr}\left(W_i = 1 | X_i \right)
 $$
+
+## Greedy Matching
+
+Greedy nearest neighbor matching forms matches by pairing a control participant with a treated participant, if the absolute difference of their propensity scores is the smallest among all possible pairs of propensity scores (i.e., they are similar on their covariates). If a caliper is used, then a match is made only if the absolute difference is less than the caliper.
+
+*Strengths*
+
+* Allows various kinds of post-matching analysis
+* Particularly useful if the outcome variable is non-normal, non-continuous (e.g., categorical dependent variable, time-to-event data)
+* Mahalanobis metric matching can be used to find out matched pairs where the number of units is small
+
+*Limitations*
+
+* Optimization is only done locally
+* "Bias due to incomplete matching" when treated subjects are excluded^[Austin, P. C. (2014). A comparison of 12 algorithms for matching on the propensity score. *Statistics in Medicine*, *33*(6), 1057–1069. https://doi.org/10.1002/sim.6004]
+- Requires a sizeable common support region
+
+## Optimal Matching
+
+Optimal matching minimizes a global distance measure to form matches. This circumvents the problem in greedy matching, where the order in which the treated are matched affects the quality of the matches. According to Gu and Rosenbaum (1993), "optimal matching picks about the same controls [as greedy matching] but does a better job of assigning them to treated units." Thus, optimal matching and greedy matching tend to produce similar results, but optimal matching may produce better matched pairs.^[Stuart, E. A. (2010). Matching Methods for Causal Inference: A Review and a Look Forward. *Statistical Science*, *25*(1), 1–21. https://doi.org/10.1214/09-STS313]
+
+In optimal pair matching, typically a treated participant is matched to a single control. With variable ratio or variable matching, each treated participant matches to a variable number of controls (because some individuals may have more matches than others).
+
+*Strengths*
+
+* Finds well-matched pairs
+* Full matching uses the entire sample
+
+*Limitations*
+
+* Does not necessarily produce better balanced groups than greedy matching
+* Variable matching may increase bias due to poor matches
+
+## Matching with or without Replacement
+
+According to Stuart (2010), matching with replacement is "particularly helpful in settings where there are few control individuals comparable to the treated individuals (e.g., Dehejia and Wahba, 1999). Additionally, when matching with replacement the order in which the treated individuals are matched does not matter. However, inference becomes more complex when matching with replacement, because the matched controls are no longer independent–--some are in the matched sample more than once and this needs to be accounted for in the outcome analysis, for example by using frequency weights. When matching with replacement it is also possible that the treatment effect estimate will be based on just a small number of controls; the number of times each control is matched should be monitored."^[Stuart, E. A. (2010). Matching Methods for Causal Inference: A Review and a Look Forward. *Statistical Science*, *25*(1), 1–21. https://doi.org/10.1214/09-STS313]
+
+A simulation study comparing 12 propensity score algorithms found that "matching with replacement did not result in estimates with less bias compared with the best-performing methods based on caliper matching without replacement. Furthermore, matching with replacement resulted in estimates that displayed greater variability and that had higher MSE compared with estimates obtained using caliper matching without replacement."^[Austin, P. C. (2014). A comparison of 12 algorithms for matching on the propensity score. *Statistics in Medicine*, *33*(6), 1057–1069. https://doi.org/10.1002/sim.6004]
+
+According to Abadie & Imbens (2006), "Matching with replacement produces matches of higher quality than matching without replacement by increasing the set of possible matches. In addition, matching with replacement has the advantage that it allows us to consider estimators that match all units, treated as well as controls, so that the estimand is identical to the population average treatment effect."^[Abadie, A., & Imbens, G. W. (2006). Large Sample Properties of Matching Estimators for Average Treatment Effects. *Econometrica*, *74*(1), 235–267. https://doi.org/10.1111/j.1468-0262.2006.00655.x]
 
 \newpage
 # 3.5 Computer Lab: Running Greedy Matching and GBR with R
@@ -525,7 +567,7 @@ gbr_df <- read_dta(here("data", "g3aca1.dta")) %>%
 
 ### Fit Generalized Boosted Regression Model
 
-The `gbm::gbm()` function has many arguments that can be fine-tuned. See `?gbm` for a detailed description of each argument. For example, to reduce prediction error, the `train.fraction` argument can be set to use a subsample of the observations for the estimation process. Here we also use `interaction.depth = 4` to specify a maximum of four splits for each simple tree used in the model, which allows all four-way interactions between all covariates to be considered for optimizing the likelihood function at each iteration. The `shrinkage` argument is also known as the learning rate or step-size reduction; we use a value of .0005 to ensure a smooth fit.
+The `gbm::gbm()` function has many arguments that can be fine-tuned. See `?gbm` for a detailed description of each argument. For example, to reduce prediction error, the `train.fraction` argument can be set to use a subsample of the observations for the estimation process. Here we also use `interaction.depth = 4` to specify a maximum of four splits for each sample tree used in the model, which allows all four-way interactions between all covariates to be considered for optimizing the likelihood function at each iteration. The `shrinkage` argument is also known as the learning rate or step-size reduction; we use a value of .0005 to ensure a smooth fit.
 
 A summary of the fitted model provides us with *relative influence*, which is the percentage of log likelihood explained by each input variable. The percentages of influence for all predictor variables sum to 100%.
 
@@ -634,7 +676,7 @@ GBR is also implemented in the `MatchIt::matchit()` and `twang::ps()` functions.
 ### Load Packages
 
 ```{r message=F, warning=F, error=F}
-pacman::p_load(optmatch, knitr, broom, sandwich, rlang)
+pacman::p_load(optmatch, knitr, broom, sandwich, rlang, marginaleffects)
 select <- dplyr::select
 ```
 
@@ -663,10 +705,7 @@ With the exception of child's gender, the difference on each covariate between t
 
 ```{r message=FALSE, warning=FALSE}
 # Intergenerational dependence
-gmodels::CrossTable(d$kuse, d$puse,
-  prop.c = FALSE, prop.r = FALSE, prop.chisq = FALSE,
-  chisq = TRUE
-)
+chisq.test(d$kuse, d$puse, correct = F)
 
 # Wilcoxon Rank-Sum (Mann-Whitney) test and t-test
 d %>%
@@ -692,7 +731,7 @@ d %>%
   threshold = c(m = .1),
   s.d.denom = "pooled"
 ))
-cobalt::love.plot(c1)
+(cobalt::love.plot(c1))
 ```
 
 ### Outcome Models Without Bias Control
@@ -704,7 +743,8 @@ d %>%
   ggplot(aes(y = lwss97, x = factor(kuse))) +
   geom_boxplot() +
   labs(x = "Treatment", y = "Letter-Word Identification Score") +
-  scale_x_discrete(labels = c("Control", "Treated"))
+  scale_x_discrete(labels = c("Control", "Treated")) +
+  theme_classic()
 ```
 
 We can estimate the ATE using an independent samples $t$ test. It shows that the treated group on average had a mean letter-word identification score that was 9.82 points lower than that of the control group ($p < .001$).
@@ -750,15 +790,17 @@ cds %>%
   theme(legend.position = "bottom")
 ```
 
-We would lose 45.3% cases if we used greedy nearest neighbor matching:
+We would lose 64.3% cases if we used nearest neighbor matching without replacement within specified caliper widths:
 
 ```{r}
-(matchit(kuse ~ mratio96 + pcged97 + pcg_adc + black + age97 + male,
+(nn_test <- matchit(kuse ~ mratio96 + pcged97 + pcg_adc + black + age97 + male,
   data = d,
   method = "nearest",
-  distance = "glm"
+  distance = "glm",
+  replace = F,
+  caliper = .25
 ))
-(nrow(d) - 548) / nrow(d)
+(nrow(d) - nrow(match.data(nn_test))) / nrow(d)
 ```
 
 \newpage
@@ -768,7 +810,7 @@ The first argument that `optmatch::fullmatch()` requires is "a matrix of non-neg
 
 By default, `min.controls` or the minimum ratio of controls to treatments that is to be permitted within a matched set is zero, and `max.controls` or the maximum ratio of controls to treatments is infinite.
 
-Hansen found that in the context of a specific application, variable matching with a specific structure worked best; that is, each treated participant was matched to at least $\frac{.5(1 - \hat{P})}{\hat{P}}$ controls and at most $\frac{2(1 - \hat{P})}{\hat{P}}$ controls, where $\hat{P}$ represents the proportion of treated participants in the sample. In this example, $\hat{P} = \frac{274}{729 + 274} = 27.32\%$, so the number of minimum controls is $\frac{.5(1 - .2732)}{.2732} = 1.33$, and the number of maximum controls is $\frac{2(1 - .2732)}{.2732} = 5.32$.
+Hansen found that in the context of a specific application, variable matching with a specific structure worked best; that is, each treated participant was matched to at least $\frac{.5(1 - \hat{P})}{\hat{P}}$ controls and at most $\frac{2(1 - \hat{P})}{\hat{P}}$ controls, where $\hat{P}$ represents the proportion of treated participants in the sample. In this example, $\hat{P} = \frac{274}{729 + 274} = 27.32\%$, so the number of minimum controls is $\frac{.5(1 - .2732)}{.2732} = 1.33$, and the number of maximum controls is $\frac{2(1 - .2732)}{.2732} = 5.32$. There is a variance trade-off when selecting a variable number of controls, because the additional controls are generally less similar than the first closest match as the treated individual, which would increase bias, while the increase in sample size can decrease variance.^[Stuart, E. A. (2010). Matching Methods for Causal Inference: A Review and a Look Forward. *Statistical Science*, *25*(1), 1–21. https://doi.org/10.1214/09-STS313]
 
 For `optmatch::pairmatch()`, we can set the number of controls to be matched to each treatment using the `controls` argument.
 
@@ -874,7 +916,7 @@ table_5.10 <- map2_dfr(arg1, arg2, imbalance) %>%
   )) %>%
   left_join(cov_labels, by = "cov") %>%
   arrange(order) %>%
-  select(cov, matching_scheme = method, dx, dxm)
+  select(cov, matching_scheme = method, dx, dxm) # or replace cov with new
 
 # Print Table
 print(table_5.10, n = 42)
@@ -935,13 +977,13 @@ broom::tidy(lmtest::coeftest(reg1, vcov = vcovCL, cluster = df2$pcg_id.x)) %>%
   mutate(p.value.one.tailed = p.value / 2)
 ```
 
-### Optimal Matching Using the MatchIt Package
+### Optimal (Pair) Matching Using the MatchIt Package
 
 For an easier interface for the `optmatch` package, the `MatchIt::matchit()` function also implements optimal full matching and optimal pair matching with the `method = "full"` and `method = "optimal"` arguments, respectively. Variable matching can be set using the `ratio`, `min.controls`, and `max.controls` arguments.
 
-Below is an illustration of optimal pair matching (by default, 1:1 without replacement) using generalized boosted model to generate the propensity scores and then a regression model for the outcome that incorporates the matching weights. Here we find that on average children who used AFDC had a letter-word identification score in 1997 that was 4.14 points lower than do children who never used AFDC ($p < .001$).
+Below is an illustration of optimal pair matching (by default, 1:1 without replacement) using generalized boosted model to generate the propensity scores and then a regression model for the outcome that incorporates the matching weights. Here we find that on average children who used AFDC had a letter-word identification score in 1997 that was 3.95 points lower than do children who never used AFDC ($p < .001$).
 
-```{r eval=F}
+```{r}
 # Optimal 1:1 Pair Matching Without Replacement Using GBM (ATT)
 set.seed(1000)
 (pm2 <- matchit(
@@ -954,14 +996,33 @@ set.seed(1000)
   estimand = "ATT"
 ))
 
-# Regression with Matching Weights and Robust Standard Errors
-pm2.lm <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96, data = d, 
-             weights = pm2$weights)
-broom::tidy(lmtest::coeftest(pm2.lm, vcov = vcovCL, cluster = d$pcg_id))
-
 # Balance Checks
 cobalt::bal.tab(pm2, binary = "std", un = T, threshold = c(m = .1))
 cobalt::love.plot(pm2, un = T, binary = "std", threshold = c(m = .1))
+
+# Get matched data
+md <- match.data(pm2)
+
+# Outcome models with matching weights and cluster-robust SEs
+pm2.lm1 <- lm(lwss97 ~ kuse, data = md, weights = weights)
+pm2.lm2 <- lm(lwss97 ~ kuse * (male + black + age97 + pcged97 + mratio96), data = md, 
+             weights = weights)
+pm2.lm3 <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96 + distance,
+              data = md, weights = weights)
+pm2.lm4 <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96, data = md, 
+             weights = weights) # doubly-robust (the standard specification)
+broom::tidy(lmtest::coeftest(pm2.lm1, vcov = vcovCL, cluster = md$pcg_id))
+broom::tidy(lmtest::coeftest(pm2.lm2, vcov = vcovCL, cluster = md$pcg_id))
+broom::tidy(lmtest::coeftest(pm2.lm3, vcov = vcovCL, cluster = md$pcg_id))
+broom::tidy(lmtest::coeftest(pm2.lm4, vcov = vcovCL, cluster = md$pcg_id))
+
+# With marginaleffects
+marginaleffects::avg_comparisons(pm2.lm4,
+  variables = "kuse", # treatment
+  vcov = ~subclass + pcg_id, # cluster-robust SEs
+  newdata = subset(md, kuse == 1), # ATT
+  wts = "weights"
+)
 ```
 
 \newpage
