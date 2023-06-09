@@ -199,9 +199,18 @@ imbalance2 <- function(df, varname, treatname, blockname) {
 ```
 
 \newpage
+# Helpful Resources
+
+* Propensity Score Analysis support site: https://ssw.unc.edu/psa/
+* MatchIt package website: https://kosukeimai.github.io/MatchIt/
+* Cobalt package website: https://ngreifer.github.io/cobalt/
+* List of R software for propensity score analysis: https://www.biostat.jhsph.edu/~estuart/propensityscoresoftware.html
+* Stuart, E. A. (2010). Matching Methods for Causal Inference: A Review and a Look Forward. *Statistical Science*, *25*(1), 1–21. https://doi.org/10.1214/09-STS313
+
+\newpage
 # Conceptual Review
 
-## Basic Ideas
+## Basic Concepts
 
 **Causal inference** is inference about *counterfactual outcomes* or *potential outcomes*. An example of a counterfactual is: What would have happened to the treated subjects, had they not received treatment?
 
@@ -265,6 +274,7 @@ In optimal pair matching, typically a treated participant is matched to a single
 
 * Finds well-matched pairs
 * Full matching uses the entire sample
+* Robust against violations of overlap in common support region
 
 *Limitations*
 
@@ -278,6 +288,35 @@ According to Stuart (2010), matching with replacement is "particularly helpful i
 A simulation study comparing 12 propensity score algorithms found that "matching with replacement did not result in estimates with less bias compared with the best-performing methods based on caliper matching without replacement. Furthermore, matching with replacement resulted in estimates that displayed greater variability and that had higher MSE compared with estimates obtained using caliper matching without replacement."^[Austin, P. C. (2014). A comparison of 12 algorithms for matching on the propensity score. *Statistics in Medicine*, *33*(6), 1057–1069. https://doi.org/10.1002/sim.6004]
 
 According to Abadie & Imbens (2006), "Matching with replacement produces matches of higher quality than matching without replacement by increasing the set of possible matches. In addition, matching with replacement has the advantage that it allows us to consider estimators that match all units, treated as well as controls, so that the estimand is identical to the population average treatment effect."^[Abadie, A., & Imbens, G. W. (2006). Large Sample Properties of Matching Estimators for Average Treatment Effects. *Econometrica*, *74*(1), 235–267. https://doi.org/10.1111/j.1468-0262.2006.00655.x]
+
+## Propensity Score Weighting
+
+Unlike matching, propensity score weighting balances data by using propensity scores to create weights. It makes the estimate of the sample average treatment effect or its inference to the population average treatment effect a weighted average of the difference between observed and potential outcomes. It is similar to the weighted analysis that is conducted when analyzing complex survey designs. To estimate the ATE, the treatment weights are $1/\hat{e}(x)$, where $\hat{e}(x)$ is the propensity score, and the control weights are $1/(1 - \hat{e}(x))$---this is known as the inverse probability of treatment weights (IPTW) estimator. To estimate the ATT, the treatment weight is 1, and the control weights are $\hat{e}(x)/(1 - \hat{e}(x))$. 
+
+*Strengths*
+
+* Permits most types of multivariate outcome analyses
+* Does not require an outcome variable that is continuous or normally distributed
+* Retains most participants in the outcome analysis
+* Flexible in the context of complex surveys^[DuGoff, E. H., Schuler, M., & Stuart, E. A. (2014). Generalizing Observational Study Results: Applying Propensity Score Methods to Complex Surveys. *Health Services Research*, *49*(1), 284–303. https://doi.org/10.1111/1475-6773.12090]
+
+*Limitations*
+
+* Variance can be large if weights are extreme^[Austin, P. C., & Stuart, E. A. (2015). Moving towards best practice when using inverse probability of treatment weighting (IPTW) using the propensity score to estimate causal treatment effects in observational studies. *Statistics in Medicine*, *34*(28), 3661–3679. https://doi.org/10.1002/sim.6607]
+
+## Matching Estimators
+
+Matching estimators directly impute missing potential outcomes at the unit level using a vector norm. After imputing the missing data, matching estimators can be used to estimate various average treatment effects. Instead of using logistic regression to predict propensity scores, matching estimators use a vector norm to calculate distances on the observed covariates between a treated case and each of its potential control cases. These calculations use either the inverse of the sample variance matrix or the inverse of the sample variance-covariance matrix. When using the inverse of the sample variance-covariance matrix, the matching estimator calculates Mahalanobis metric distances.
+
+*Strengths*
+
+* Calculate a variety of average treatment effects
+* Estimate effects for both the sample and the population
+
+*Liimtations*
+
+* Require a sizeable common support region
+* More sensitive to the violation of the strongly ignorable assumption
 
 \newpage
 # 3.5 Computer Lab: Running Greedy Matching and GBR with R
@@ -731,7 +770,7 @@ d %>%
   threshold = c(m = .1),
   s.d.denom = "pooled"
 ))
-(cobalt::love.plot(c1))
+(cobalt::love.plot(c1, sample.names = c("Unmatched")))
 ```
 
 ### Outcome Models Without Bias Control
@@ -998,7 +1037,8 @@ set.seed(1000)
 
 # Balance Checks
 cobalt::bal.tab(pm2, binary = "std", un = T, threshold = c(m = .1))
-cobalt::love.plot(pm2, un = T, binary = "std", threshold = c(m = .1))
+cobalt::love.plot(pm2, un = T, binary = "std", threshold = c(m = .1),
+                  sample.names = c("Unmatched", "Matched"))
 
 # Get matched data
 md <- match.data(pm2)
@@ -1010,13 +1050,13 @@ pm2.lm2 <- lm(lwss97 ~ kuse * (male + black + age97 + pcged97 + mratio96), data 
 pm2.lm3 <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96 + distance,
               data = md, weights = weights)
 pm2.lm4 <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96, data = md, 
-             weights = weights) # doubly-robust (the standard specification)
+             weights = weights) # doubly-robust
 broom::tidy(lmtest::coeftest(pm2.lm1, vcov = vcovCL, cluster = md$pcg_id))
 broom::tidy(lmtest::coeftest(pm2.lm2, vcov = vcovCL, cluster = md$pcg_id))
 broom::tidy(lmtest::coeftest(pm2.lm3, vcov = vcovCL, cluster = md$pcg_id))
 broom::tidy(lmtest::coeftest(pm2.lm4, vcov = vcovCL, cluster = md$pcg_id))
 
-# With marginaleffects
+# Estimate ATT with marginaleffects::avg_comparisons()
 marginaleffects::avg_comparisons(pm2.lm4,
   variables = "kuse", # treatment
   vcov = ~subclass + pcg_id, # cluster-robust SEs
@@ -1086,6 +1126,34 @@ psw_df <- read_dta("data/chpt5_2_original.dta") %>%
   )
 ```
 
+## Check Balance
+
+```{r}
+# ATE
+cobalt::bal.tab(
+  x = select(psw_df, male, black, age97, pcged97, mratio96),
+  treat = psw_df$kuse,
+  binary = "std",
+  continuous = "std",
+  s.d.denom = "pooled",
+  un = T,
+  stats = c("mean.diffs", "variance.ratios"),
+  thresholds = c(m = .1, v = 2)
+)
+
+# ATT
+cobalt::bal.tab(
+  x = select(psw_df, male, black, age97, pcged97, mratio96),
+  treat = psw_df$kuse,
+  binary = "std",
+  continuous = "std",
+  s.d.denom = "treated",
+  un = T,
+  stats = c("mean.diffs", "variance.ratios"),
+  thresholds = c(m = .1, v = 2)
+)
+```
+
 ## Calculate Weights with the WeightIt Package
 
 ```{r message=F, fig.width=6, fig.height=3.5, fig.align="center"}
@@ -1127,7 +1195,7 @@ lmtest::coeftest(psw_att, vcov. = vcovCL(psw_att, cluster = psw_df$pcg_id))
 
 ## Check Balance
 
-To assess balance before and after propensity score weighting, use weighted logistic regression for dummy covariates and weighted simple regression for continuous covariates. Some examples are included below, and the full code can be found in Section 7.3.1 of the PSA-R code.
+To assess balance before and after propensity score weighting, we can use weighted logistic regression for the dummy covariates and weighted simple regression for the continuous covariates. Some examples are included below, and the full code can be found in Section 7.3.1 of the PSA-R code.
 
 In model `psw_c3` below, the treatment dummy variable is significant, meaning that there is no sufficient balance after the propensity score weighting.
 
@@ -1145,11 +1213,11 @@ psw_c4 <- lm(age97 ~ kuse, weights = att_w, data = psw_df)
 lmtest::coeftest(psw_c4, vcov. = vcovCL(psw_c4, cluster = psw_df$pcg_id))
 ```
 
-Alternatively, balance can be assessed using standardized mean differences:
+Alternatively, balance can be assessed using the `cobalt` package. In addition to mean differences, variance ratios can be requested. Common thresholds for balanced groups are .5 and 2, but it will be close to 1 when group variances are similar.
 
 ```{r}
 # ATE
-cobalt::bal.tab(
+(psw_b1 <- cobalt::bal.tab(
   x = select(psw_df, male, black, age97, pcged97, mratio96),
   treat = psw_df$kuse,
   weights = psw_df$ate_w,
@@ -1157,12 +1225,13 @@ cobalt::bal.tab(
   continuous = "std",
   s.d.denom = "pooled",
   un = T,
-  stats = c("mean.diffs"),
-  thresholds = c(m = .1)
-)
+  stats = c("mean.diffs", "variance.ratios"),
+  thresholds = c(m = .1, v = 2)
+))
+cobalt::love.plot(psw_b1)
 
 # ATT
-cobalt::bal.tab(
+(psw_b2 <- cobalt::bal.tab(
   x = select(psw_df, male, black, age97, pcged97, mratio96),
   treat = psw_df$kuse,
   weights = psw_df$att_w,
@@ -1170,8 +1239,47 @@ cobalt::bal.tab(
   continuous = "std",
   s.d.denom = "treated",
   un = T,
-  stats = c("mean.diffs"),
+  stats = c("mean.diffs", "variance.ratios"),
+  thresholds = c(m = .1, v = 2)
+))
+cobalt::love.plot(psw_b2)
+```
+
+## Using WeightIt
+
+The WeightIt package can generate propensity scores and the appropriate weights in a single step.
+
+```{r}
+# Estimate propensity scores and generate ATT weights
+psw_g1 <- WeightIt::weightit(
+  kuse ~ male + black + age97 + pcged97 + mratio96,
+  data = psw_df, estimand = "ATT", method = "glm"
+)
+
+# Check balance
+cobalt::bal.tab(
+  psw_g1,
+  binary = "std",
+  continuous = "std",
+  s.d.denom = "treated",
+  un = T,
+  stats = c("m"),
   thresholds = c(m = .1)
+)
+
+# Attach ATT weights to dataframe
+psw_df2 <- psw_df %>% mutate(weights = psw_g1$weights)
+
+# Fit outcome model and estimate treatment effect with cluster-robust SEs
+psw_g2 <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96,
+  data = psw_df2, weights = weights
+)
+marginaleffects::avg_comparisons(
+  psw_g2,
+  variables = "kuse",
+  vcov = ~pcg_id,
+  newdata = subset(psw_df2, kuse == 1),
+  wts = "weights"
 )
 ```
 
