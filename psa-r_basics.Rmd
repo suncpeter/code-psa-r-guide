@@ -1128,6 +1128,8 @@ psw_df <- read_dta("data/chpt5_2_original.dta") %>%
 
 ## Check Balance
 
+In addition to standardized mean differences, variance ratios can be requested. Common thresholds for balanced groups are .5 and 2, but it will be close to 1 when group variances are similar.
+
 ```{r}
 # ATE
 cobalt::bal.tab(
@@ -1135,7 +1137,7 @@ cobalt::bal.tab(
   treat = psw_df$kuse,
   binary = "std",
   continuous = "std",
-  s.d.denom = "pooled",
+  s.d.denom = "pooled", # ATE
   un = T,
   stats = c("mean.diffs", "variance.ratios"),
   thresholds = c(m = .1, v = 2)
@@ -1147,7 +1149,7 @@ cobalt::bal.tab(
   treat = psw_df$kuse,
   binary = "std",
   continuous = "std",
-  s.d.denom = "treated",
+  s.d.denom = "treated", # ATT
   un = T,
   stats = c("mean.diffs", "variance.ratios"),
   thresholds = c(m = .1, v = 2)
@@ -1176,6 +1178,7 @@ After creating the weights, use the `weights` argument in `lm()` to run a weight
 This analysis showed that children who used Aid to Families With Dependent Children (AFDC) had an average letter-word identification score that was 5.16 points lower than children who never used AFDC, $p < .01$.
 
 ```{r message=FALSE, warning=FALSE}
+# ATE
 psw_ate <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96,
   data = psw_df, weights = ate_w
 )
@@ -1187,6 +1190,7 @@ lmtest::coeftest(psw_ate, vcov. = vcovCL(psw_ate, cluster = psw_df$pcg_id))
 When considering only individuals assigned to the treatment condition, children who used AFDC had an average letter-word identification score that was 4.62 points lower than children who never used AFDC, $p < .01$.
 
 ```{r message=FALSE, warning=FALSE}
+# ATT
 psw_att <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96,
   data = psw_df, weights = att_w
 )
@@ -1213,7 +1217,7 @@ psw_c4 <- lm(age97 ~ kuse, weights = att_w, data = psw_df)
 lmtest::coeftest(psw_c4, vcov. = vcovCL(psw_c4, cluster = psw_df$pcg_id))
 ```
 
-Alternatively, balance can be assessed using the `cobalt` package. In addition to mean differences, variance ratios can be requested. Common thresholds for balanced groups are .5 and 2, but it will be close to 1 when group variances are similar.
+Alternatively, balance can be assessed using the `cobalt` package.
 
 ```{r}
 # ATE
@@ -1301,7 +1305,7 @@ pacman::p_load(Matching)
 Note that the `Matching::Match()` function is intended to be used in conjunction with the `MatchBalance()` function. However, functions from the `cobalt` package also work well and tend to be cleaner in presentation:^[https://cran.r-project.org/web/packages/cobalt/vignettes/cobalt_A1_other_packages.html#using-bal.tab-with-matching]
 
 ```{r eval=F}
-data(lalonde)
+data(lalonde, package = "Matching")
 ex_f <- as.formula(treat ~ age + I(age^2) + educ + I(educ^2) + black +
   hisp + married + nodegr + re74 + I(re74^2) + re75 + I(re75^2) +
   u74 + u75)
@@ -1319,7 +1323,7 @@ ex_mb <- MatchBalance(treat ~ age + I(age^2) + educ + I(educ^2) + black +
   data = lalonde, distance = ~ex_p, un = T,
   binary = "std", threshold = .1
 ))
-cobalt::love.plot(ex_bal)
+cobalt::love.plot(ex_bal, sample.names = c("Unmatched", "Matched"))
 ```
 
 ### Description of Dataset
@@ -1561,7 +1565,7 @@ me_SATE <- Match(
   thresholds = c(m = .1),
   s.d.denom = "pooled"
 ))
-cobalt::love.plot(me_SATE_bal) +
+cobalt::love.plot(me_SATE_bal, sample.names = c("Unmatched", "Matched")) +
   labs(title = "Covariate Balance for SATE")
 ```
 
