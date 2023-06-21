@@ -26,7 +26,7 @@ options(scipen = 999)
 ```
 
 \newpage
-# Section 3.8: Computer Lab: Running Propennsity Score Subclassification in Conjunction with Cox Regression with R
+# Section 3.8: Computer Lab: Running Propensity Score Subclassification in Conjunction with Cox Regression with R
 
 This lab illustrates propensity score subclassification followed by a multivariate outcome analysis using a Cox proportional hazards model. We will also show an example of marginal mean weighting through stratification (MMWS), which is an alternative method of estimating marginal effects after stratum weighting (as opposed to aggregating the results).
 
