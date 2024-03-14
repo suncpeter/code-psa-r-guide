@@ -20,7 +20,7 @@ header-includes:
 - \pagenumbering{gobble}
 ---
 
-```{r}
+```{r echo=F, message=F, error=F, warning=F}
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(tictoc, formatR)
 tic()
@@ -204,7 +204,6 @@ imbalance2 <- function(df, varname, treatname, blockname) {
 }
 ```
 
-\newpage
 # Helpful Resources
 
 * Propensity Score Analysis support site: https://ssw.unc.edu/psa/
