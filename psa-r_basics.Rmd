@@ -1,11 +1,11 @@
 ---
 title: "Propensity Score Analysis in R - Basics"
 author: "Statistical Horizons"
-date: "June 6-9, 2023"
+date: "March 14-16, 2024"
 output:
   pdf_document:
     number_sections: no
-    toc: yes
+    toc: no
     toc_depth: 4
 header-includes:
 - \usepackage{float}
@@ -19,6 +19,12 @@ header-includes:
 - \newcommand{\elandscape}{\end{landscape}}
 - \pagenumbering{gobble}
 ---
+
+```{r}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tictoc, formatR)
+tic()
+```
 
 ```{r include=F}
 # Prevent scientific notation
@@ -1128,7 +1134,7 @@ psw_df <- read_dta("data/chpt5_2_original.dta") %>%
 
 ## Check Balance
 
-In addition to standardized mean differences, variance ratios can be requested. Common thresholds for balanced groups are .5 and 2, but it will be close to 1 when group variances are similar.
+In addition to standardized mean differences, variance ratios can be requested. Common thresholds for balanced groups are .5 and 2, but it will be close to 1 when group variances are similar. Remember to use `s.d.denom = "pooled"' for the ATE and 's.d.denom = "treated"' for the ATT.
 
 ```{r}
 # ATE
@@ -1137,7 +1143,7 @@ cobalt::bal.tab(
   treat = psw_df$kuse,
   binary = "std",
   continuous = "std",
-  s.d.denom = "pooled", # ATE
+  s.d.denom = "pooled",
   un = T,
   stats = c("mean.diffs", "variance.ratios"),
   thresholds = c(m = .1, v = 2)
@@ -1149,7 +1155,7 @@ cobalt::bal.tab(
   treat = psw_df$kuse,
   binary = "std",
   continuous = "std",
-  s.d.denom = "treated", # ATT
+  s.d.denom = "treated",
   un = T,
   stats = c("mean.diffs", "variance.ratios"),
   thresholds = c(m = .1, v = 2)
@@ -1713,4 +1719,16 @@ hodgesl <- function(dataname, varname, blockname, treatname) {
     left_join(r2, by = "i")
   return(results)
 }
+```
+
+\newpage
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+
+```{r echo=F}
+toc()
 ```
