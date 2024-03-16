@@ -267,7 +267,8 @@ Greedy nearest neighbor matching forms matches by pairing a control participant 
 
 * Optimization is only done locally
 * "Bias due to incomplete matching" when treated subjects are excluded^[Austin, P. C. (2014). A comparison of 12 algorithms for matching on the propensity score. *Statistics in Medicine*, *33*(6), 1057–1069. https://doi.org/10.1002/sim.6004]
-- Requires a sizeable common support region
+* Requires a sizeable common support region
+* Only ATT is estimable
 
 ## Optimal Matching
 
@@ -1025,7 +1026,7 @@ broom::tidy(lmtest::coeftest(reg1, vcov = vcovCL, cluster = df2$pcg_id.x)) %>%
 
 For an easier interface for the `optmatch` package, the `MatchIt::matchit()` function also implements optimal full matching and optimal pair matching with the `method = "full"` and `method = "optimal"` arguments, respectively. Variable matching can be set using the `ratio`, `min.controls`, and `max.controls` arguments.
 
-Below is an illustration of optimal pair matching (by default, 1:1 without replacement) using generalized boosted model to generate the propensity scores and then a regression model for the outcome that incorporates the matching weights. Here we find that on average children who used AFDC had a letter-word identification score in 1997 that was 3.95 points lower than do children who never used AFDC ($p < .001$).
+Below is an illustration of optimal pair matching (by default, 1:1 without replacement) using generalized boosted model to generate the propensity scores and then a regression model for the outcome that incorporates the matching weights. Here we find that on average children who used AFDC had a letter-word identification score in 1997 that was 4.13 points lower than do children who never used AFDC ($p < .001$).
 
 ```{r}
 # Optimal 1:1 Pair Matching Without Replacement Using GBM (ATT)
@@ -1061,7 +1062,7 @@ broom::tidy(lmtest::coeftest(pm2.lm2, vcov = vcovCL, cluster = md$pcg_id))
 broom::tidy(lmtest::coeftest(pm2.lm3, vcov = vcovCL, cluster = md$pcg_id))
 broom::tidy(lmtest::coeftest(pm2.lm4, vcov = vcovCL, cluster = md$pcg_id))
 
-# Estimate ATT with marginaleffects::avg_comparisons()
+# Estimate ATT with marginaleffects::avg_comparisons() (G-computation)
 marginaleffects::avg_comparisons(pm2.lm4,
   variables = "kuse", # treatment
   vcov = ~subclass + pcg_id, # cluster-robust SEs
@@ -1270,26 +1271,28 @@ cobalt::bal.tab(
   psw_g1,
   binary = "std",
   continuous = "std",
-  s.d.denom = "treated",
+  s.d.denom = "treated", # att
   un = T,
   stats = c("m"),
   thresholds = c(m = .1)
 )
 
 # Attach ATT weights to dataframe
-psw_df2 <- psw_df %>% mutate(weights = psw_g1$weights)
+psw_df2 <- psw_df %>% mutate(att_weights = psw_g1$weights)
 
 # Fit outcome model and estimate treatment effect with cluster-robust SEs
 psw_g2 <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96,
-  data = psw_df2, weights = weights
+  data = psw_df2, weights = att_weights
 )
 marginaleffects::avg_comparisons(
   psw_g2,
   variables = "kuse",
   vcov = ~pcg_id,
-  newdata = subset(psw_df2, kuse == 1),
-  wts = "weights"
+  newdata = subset(psw_df2, kuse == 1), # att
+  wts = "att_weights"
 )
+
+# How would you calculate the ATE weights using this approach?
 ```
 
 \newpage
@@ -1307,7 +1310,7 @@ Because the assumptions about constant treatment effect and homoskedasticity may
 pacman::p_load(Matching)
 ```
 
-Note that the `Matching::Match()` function is intended to be used in conjunction with the `MatchBalance()` function. However, functions from the `cobalt` package also work well and tend to be cleaner in presentation:^[https://cran.r-project.org/web/packages/cobalt/vignettes/cobalt_A1_other_packages.html#using-bal.tab-with-matching]
+Note that the `Matching::Match()` function is intended to be used in conjunction with the `MatchBalance()` function. However, functions from the `cobalt` package also work well and tend to be cleaner in presentation:^[https://ngreifer.github.io/cobalt/articles/other-packages.html]
 
 ```{r eval=F}
 data(lalonde, package = "Matching")
@@ -1416,12 +1419,11 @@ If `Var.calc = 0`, then homoskedasticity is assumed. Use `Var.calc = 4` to reque
 
 The `estimand` argument is by default "ATT" but can be set to "ATE" or "ATC". Typically, we are interested in the ATE or ATT. The ATT seeks to answer questions such as "How would treated patients' outcomes differ, on average, had they not received treatment?"; the ATE is the treatment effect for both control and treated units; and the ATC, the average treatment effect for the controls, investigates the effect of the treatment for a population who did not receive treatment.^[https://arxiv.org/abs/2106.10577]
 
-The `sample` argument is a logical flag indicating whether the population or sample variance should be estimated. An example may help illustrate the difference between PATE and SATE: "While the
-SATE is useful for judging how a job-training program has affected a particular group of
+The `sample` argument is a logical flag indicating whether the population or sample variance should be estimated. An example may help illustrate the difference between PATE and SATE: "While the SATE is useful for judging how a job-training program has affected a particular group of
 participants, the PATE can be used to evaluate whether another group of participants
 drawn from the same population is likely to benefit from the program."^[https://journals.sagepub.com/doi/pdf/10.1177/1536867X0400400307] In other words, the sample effect shows whether the program is successful in the sample at hand, while the population effect shows whether the same program would be successful in a second sample from the population.
 
-Results from the `Matching::Match()` function are identical to Stata's `nnmatch` program.
+Results from the `Matching::Match()` function are identical to Stata's `nnmatch` program and can be replicated using the `MatchIt::matchit()` function.
 
 ### Define Outcome (Y), Treatment Index (Tr), and Variables to Match On (X)
 
@@ -1572,6 +1574,53 @@ me_SATE <- Match(
 ))
 cobalt::love.plot(me_SATE_bal, sample.names = c("Unmatched", "Matched")) +
   labs(title = "Covariate Balance for SATE")
+```
+
+### Outcome Analysis
+
+```{r}
+# Recovering a matched dataset
+me_out <- Match(
+  Y = me_Y, Tr = me_Tr, X = me_X, M = 1, Var.calc = 4,
+  estimand = "ATT", sample = T, replace = F
+)
+summary(me_out)
+me_out_md <- rbind(me_df[me_out$index.treated,], me_df[me_out$index.control,])
+```
+
+\newpage
+### Compare Results with MatchIt
+
+```{r}
+# Calculate propensity scores
+me_glm <- glm(kuse ~ male + black + age97 + pcged97 + mratio96 + pcg_adc,
+  family = binomial, data = me_df
+)
+
+# Nearest neighbor matching
+me_MatchIt <- MatchIt::matchit(
+  kuse ~ male + black + age97 + pcged97 + mratio96 + pcg_adc,
+  method = "nearest",
+  distance = "glm",
+  estimand = "ATT",
+  data = me_df,
+  m.order = "data",
+  replace = F
+)
+me_Matching <- Match(
+  Y = me_df$pcss97,
+  Tr = me_df$kuse,
+  X = me_glm$fitted,
+  M = 1,
+  replace = F,
+  estimand = "ATT",
+  distance.tolerance = 0,
+  ties = F,
+  sample = F
+)
+
+# Verify that the results are identical
+cobalt::bal.tab(me_MatchIt, weights = me_Matching)
 ```
 
 \newpage
