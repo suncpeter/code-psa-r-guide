@@ -1423,7 +1423,7 @@ The `sample` argument is a logical flag indicating whether the population or sam
 participants, the PATE can be used to evaluate whether another group of participants
 drawn from the same population is likely to benefit from the program."^[https://journals.sagepub.com/doi/pdf/10.1177/1536867X0400400307] In other words, the sample effect shows whether the program is successful in the sample at hand, while the population effect shows whether the same program would be successful in a second sample from the population.
 
-Results from the `Matching::Match()` function are identical to Stata's `nnmatch` program and can be replicated using the `MatchIt::matchit()` function.
+Results from the `Matching::Match()` function are identical to Stata's `nnmatch` program.
 
 ### Define Outcome (Y), Treatment Index (Tr), and Variables to Match On (X)
 
