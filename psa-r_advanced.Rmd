@@ -23,7 +23,7 @@ header-includes:
 
 ```{r echo=F, message=F, error=F, warning=F}
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(tictoc, formatR)
+pacman::p_load(tictoc, formatR, benchmarkme, memuse)
 tic()
 ```
 
@@ -1064,6 +1064,13 @@ konfound::konfound(m1, wt)
 \newpage
 
 # Session Info
+
+```{r echo=F, message=F, error=F, warning=F}
+S <- benchmarkme::get_sys_details()
+GB <- memuse::Sys.meminfo()
+```
+
+The current machine uses the following CPU: `r S$cpu$model_name`, with `r S$cpu$no_of_cores` cores and `r GB$totalram` of RAM. 
 
 ```{r}
 sessionInfo()
