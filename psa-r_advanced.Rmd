@@ -80,7 +80,7 @@ The research question is whether caregivers' use of substance abuse services (`a
 
 ```{r}
 # Import data and remove Stata formats/labels
-df <- read_dta("data/adv/sur_subclass.dta") %>%
+df <- read_dta(here("data/adv/sur_subclass.dta")) %>%
   haven::zap_formats() %>%
   sjlabelled::remove_all_labels() %>%
   as_tibble()
@@ -353,7 +353,8 @@ subs_t %>%
 
 # Filter significant results
 subs_t %>%
-  group_map(~ map_dfr(covs2, check_blc, df = .x) %>% filter(p.value < .05))
+  group_map(~ map_dfr(covs2, check_blc, df = .x) %>%
+  filter(p.value < .05))
 ```
 
 ## Outcome Analysis by Subclass
@@ -438,6 +439,7 @@ cobalt::love.plot(mm, binary = "std", disp.subclass = T, threshold = c(m = .1))
 cobalt::bal.tab(mm, un = T, binary = "std", disp.subclass = T, threshold = c(m = .1))
 broom::tidy(survival::coxph(f2, df, mm$weights, robust = T))
 exp(0.434) # significant, but note the violations of the overlap assumption
+cobalt::bal.plot(mm, var.name = "distance", which.sub = 1)
 
 # With trimmed dataset & outcome analysis with MMWS
 (mm2 <- MatchIt::matchit(f, df.trimmed, method = "subclass", subclass = 5)) # ATT
@@ -447,6 +449,11 @@ cobalt::love.plot(mm2, binary = "std", disp.subclass = T, threshold = c(m = .1))
 cobalt::bal.tab(mm2, un = T, binary = "std", disp.subclass = T, threshold = c(m = .1))
 broom::tidy(survival::coxph(f2, df.trimmed, mm2$weights, robust = T))
 exp(0.281)
+cobalt::bal.plot(mm2, var.name = "distance", which.sub = 1)
+
+# Comparing loss of sample size with greedy matching within calipers
+(mm.gm <- MatchIt::matchit(f, df, caliper = .25)) # loss of 81.6%
+(nrow(df) - nrow(match.data(mm2))) / nrow(df) # loss of 72.6%
 ```
 
 **Results with Subclassification (MatchIt) and Trimming:** The study finds that by controlling for selection bias, children whose caregivers used substance abuse treatment are more likely to receive a maltreatment re-report, and the hazard of having a re-report for these children is 32.45% higher than that of children whose caregivers did not use substance abuse treatment, although this difference is not statistically significant at the .05 level ($p = 0.173$).
@@ -456,7 +463,7 @@ exp(0.281)
 
 ## Modeling Doses of Treatment With Multiple Balancing Scores Estimated by a Multinomial Logit Model
 
-In this example, the treatment dosage is the categorized percentage of time a child used Aid to Families with Dependent Children (AFDC) from birth to current age in 1997 (`tx0`, `tx1`, and `tx2`). The outcome variable is academic achievement. as measured by the letter-word identification score in 1997 (`lwss97`). We hypothesize that an increase in levels of using AFDC decreases academic achievement in a linear fashion. 
+In this example, the treatment dosage is the categorized percentage of time a child used Aid to Families with Dependent Children (AFDC) from birth to current age in 1997 (`tx0`, `tx1`, and `tx2`). The outcome variable is academic achievement. as measured by the letter-word identification score in 1997 (`lwss97`). We hypothesize that an increase in levels of using AFDC decreases academic achievement in a linear fashion.
 
 ### Load Packages
 
