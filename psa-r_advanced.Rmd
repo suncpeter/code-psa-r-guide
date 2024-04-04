@@ -1,7 +1,7 @@
 ---
 title: "Propensity Score Analysis in R - Advanced"
 author: "Statistical Horizons"
-date: "June 20-23, 2023"
+date: "April 4, 2024"
 output:
   pdf_document:
     number_sections: no
@@ -20,6 +20,12 @@ header-includes:
 - \pagenumbering{gobble}
 - \usepackage{upgreek}
 ---
+
+```{r echo=F, message=F, error=F, warning=F}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tictoc, formatR)
+tic()
+```
 
 ```{r include=F}
 options(scipen = 999)
@@ -1004,9 +1010,9 @@ sub <- sample(1:nrow(data.raw), round(nrow(data.raw) * 8 / 10))
 ```
 
 ```{r eval=F}
-# 1:1 Optimal Matching
+# 1:1 Optimal Pair Matching
 m.out <- MatchIt::matchit(
-  formula =
+  formula = 
   data = data.main, 
   distance = "logit",
   method = "optimal", 
@@ -1018,14 +1024,14 @@ m.out <- MatchIt::matchit(
 m.pairs <- 
 
 # Count the first set of discrepant pairs in a table of treated and control outcomes
-x <- 
+x <-
 
 # Count the second set of discrepant pairs in a table of treated and control outcomes
-y <- 
+y <-
 
 # Sensitivity test for matched binary outcomes
 rbounds::binarysens(
-  
+
 )
 ```
 
@@ -1053,4 +1059,16 @@ pacman::p_load(konfound)
 m1 <- lm(mpg ~ wt + hp, data = mtcars)
 tidy(m1)
 konfound::konfound(m1, wt)
+```
+
+\newpage
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+
+```{r echo=F}
+toc()
 ```
