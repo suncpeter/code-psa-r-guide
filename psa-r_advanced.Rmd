@@ -1,7 +1,7 @@
 ---
 title: "Propensity Score Analysis in R - Advanced"
 author: "Statistical Horizons"
-date: "April 4, 2024"
+date: "April 4-6, 2024"
 output:
   pdf_document:
     number_sections: no
