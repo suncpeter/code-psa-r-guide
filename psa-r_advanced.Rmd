@@ -80,7 +80,7 @@ The research question is whether caregivers' use of substance abuse services (`a
 
 ```{r}
 # Import data and remove Stata formats/labels
-df <- read_dta(here("data/adv/sur_subclass.dta")) %>%
+df <- haven::read_dta(here("data/adv/sur_subclass.dta")) %>%
   haven::zap_formats() %>%
   sjlabelled::remove_all_labels() %>%
   as_tibble()
@@ -436,7 +436,7 @@ The `MatchIt` package provides a convenient interface for performing subclassifi
 table(mm$subclass)
 mm$q.cut # vector of propensity score cutpoints to define subclasses
 cobalt::love.plot(mm, binary = "std", disp.subclass = T, threshold = c(m = .1))
-cobalt::bal.tab(mm, un = T, binary = "std", disp.subclass = T, threshold = c(m = .1))
+cobalt::bal.tab(mm, un = T, binary = "std", disp.subclass = F, threshold = c(m = .1))
 broom::tidy(survival::coxph(f2, df, mm$weights, robust = T))
 exp(0.434) # significant, but note the violations of the overlap assumption
 cobalt::bal.plot(mm, var.name = "distance", which.sub = 1)
@@ -446,7 +446,7 @@ cobalt::bal.plot(mm, var.name = "distance", which.sub = 1)
 table(mm2$subclass)
 mm2$q.cut # vector of propensity score cutpoints to define subclasses
 cobalt::love.plot(mm2, binary = "std", disp.subclass = T, threshold = c(m = .1))
-cobalt::bal.tab(mm2, un = T, binary = "std", disp.subclass = T, threshold = c(m = .1))
+cobalt::bal.tab(mm2, un = T, binary = "std", disp.subclass = F, threshold = c(m = .1))
 broom::tidy(survival::coxph(f2, df.trimmed, mm2$weights, robust = T))
 exp(0.281)
 cobalt::bal.plot(mm2, var.name = "distance", which.sub = 1)
@@ -470,7 +470,7 @@ In this example, the treatment dosage is the categorized percentage of time a ch
 We need the `nnet` package to run a multinomial logit model.
 
 ```{r message=F, warning=F, error=F}
-pacman::p_load(nnet, lmtest, sandwich)
+pacman::p_load(nnet, lmtest, sandwich, marginaleffects)
 ```
 
 ### Load Data
@@ -500,9 +500,10 @@ In this example, we treated the highest dosage category (i.e., 34% to 100% of th
 
 ```{r message=FALSE, warning=FALSE}
 tab(df, k_adc)
+print(tab(df, k_adc), n = 51)
 
 # Categorize the Continuous Treatment k_adc
-df <- df %>%
+df2 <- df %>%
   mutate(tx = factor(
     case_when(
       k_adc == 0 ~ 0,
@@ -511,13 +512,13 @@ df <- df %>%
     ), levels = c(2, 0, 1)))
 
 # Inspect factor levels of treatment
-levels(df$tx)
+levels(df2$tx)
 ```
 
 The distribution of the three doses are shown below:
 
 ```{r}
-tab(df, tx)
+tab(df2, tx)
 ```
 
 ### Generalized Propensity Scores
@@ -532,7 +533,7 @@ We obtain three scores for each child, and each score indicates the generalized 
 # Use multinomial logit model to predict generalized propensity scores
 m1 <- nnet::multinom(
   tx ~ pcg_adc + age97 + mratio96 + pcged97 + black,
-  data = df
+  data = df2
 )
 summary(m1)
 
@@ -551,13 +552,13 @@ Note that even though each participant has three generalized propensity scores (
 
 ```{r message=FALSE, warning=FALSE}
 # Define inverse of the generalized p-scores as sampling weights
-df <- df %>%
+df3 <- df2 %>%
   mutate(dose_w = case_when(
     tx == 0 ~ 1 / pr$pr0,
     tx == 1 ~ 1 / pr$pr1,
     tx == 2 ~ 1 / pr$pr2
   ))
-summary(df$dose_w)
+summary(df3$dose_w)
 ```
 
 ### Dummy Variables
@@ -566,14 +567,14 @@ Next, we create dummy variables for the outcome analysis. For a study with three
 
 ```{r message=FALSE, warning=FALSE}
 # Create t-1 dummy variables to measure dose categories
-df <- df %>%
+df4 <- df3 %>%
   mutate(
     tx0 = ifelse(tx == 0, 1, 0),
     tx1 = ifelse(tx == 1, 1, 0)
   )
 
-tab(df, tx0)
-tab(df, tx1)
+tab(df4, tx0)
+tab(df4, tx1)
 ```
 
 ### Regression Analysis
@@ -587,8 +588,8 @@ The results of the regression with propensity score adjustments show that, other
 ```{r}
 # Regression controls for selection using inverse p-scores as weights
 m3 <- lm(lwss97 ~ male + black + age97 + pcged97 + mratio96 + pcg_adc + tx0 + tx1,
-         weights = dose_w, data = df)
-lmtest::coeftest(m3, vcovCL, cluster = df$pcg_id)
+         weights = dose_w, data = df4)
+lmtest::coeftest(m3, vcovCL, cluster = df4$pcg_id)
 ```
 
 #### Without Propensity Score Adjustment
@@ -598,8 +599,30 @@ In contrast, the regression model without propensity score adjustments showed th
 ```{r}
 # Regression does not control for selection
 m2 <- lm(lwss97 ~ male + black + age97 + pcged97 + mratio96 + pcg_adc + tx0 +
-  tx1, data = df)
-lmtest::coeftest(m2, vcovCL, cluster = df$pcg_id)
+  tx1, data = df4)
+lmtest::coeftest(m2, vcovCL, cluster = df4$pcg_id)
+```
+
+### Using the WeightIt Package
+
+```{r}
+w <- WeightIt::weightit(tx ~ pcg_adc + age97 + mratio96 + pcged97 + black,
+  method = "glm", estimand = "ATE", data = df2
+)
+cobalt::bal.tab(w, un = T, binary = "std", threshold = c(m = .1))
+cobalt::love.plot(w, un = T, binary = "std", threshold = c(m = .1))
+w_lm <- WeightIt::lm_weightit(
+  lwss97 ~ tx * (male + black + age97 + pcged97 +
+    mratio96 + pcg_adc),
+  data = df2,
+  weightit = w
+)
+(w_ap <- marginaleffects::avg_predictions(
+  w_lm,
+  variables = "tx",
+  vcov = ~pcg_id,
+  newdata = df2
+))
 ```
 
 \newpage
