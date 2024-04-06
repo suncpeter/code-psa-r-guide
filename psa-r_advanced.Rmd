@@ -904,7 +904,7 @@ cobalt::love.plot(f,
 \newpage
 # Section 6.4: Computer Lab: Running Sensitivity Analysis with rbounds
 
-Sensitivity analysis seeks to answer the question: How sensitive are findings to hidden bias? Although sensitivity analysis is exploratory, it is an important step and recommended in observational studies. In this section, we demonstrate how to carry out Rosenbaum's approach to sensitivity analysis.
+Sensitivity analysis seeks to answer the question: How sensitive are findings to hidden bias? Or, under what conditions would our inferences change? Although sensitivity analysis is exploratory, it is an important step and recommended in observational studies. In this section, we demonstrate how to carry out Rosenbaum's approach to sensitivity analysis.
 
 ## Sensitivity Analysis of the Effects
 
