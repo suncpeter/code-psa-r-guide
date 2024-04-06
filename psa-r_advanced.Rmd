@@ -463,14 +463,14 @@ cobalt::bal.plot(mm2, var.name = "distance", which.sub = 1)
 
 ## Modeling Doses of Treatment With Multiple Balancing Scores Estimated by a Multinomial Logit Model
 
-In this example, the treatment dosage is the categorized percentage of time a child used Aid to Families with Dependent Children (AFDC) from birth to current age in 1997 (`tx0`, `tx1`, and `tx2`). The outcome variable is academic achievement. as measured by the letter-word identification score in 1997 (`lwss97`). We hypothesize that an increase in levels of using AFDC decreases academic achievement in a linear fashion.
+In this example, the treatment dosage is the categorized percentage of time a child used Aid to Families with Dependent Children (AFDC) from birth to current age in 1997 (`tx0`, `tx1`, and `tx2`). The outcome variable is academic achievement, as measured by the letter-word identification score in 1997 (`lwss97`). We hypothesize that an increase in levels of using AFDC decreases academic achievement in a linear fashion.
 
 ### Load Packages
 
 We need the `nnet` package to run a multinomial logit model.
 
 ```{r message=F, warning=F, error=F}
-pacman::p_load(nnet, lmtest, sandwich, marginaleffects)
+pacman::p_load(nnet, lmtest, sandwich, marginaleffects, WeightIt)
 ```
 
 ### Load Data
@@ -1054,14 +1054,13 @@ m.out <- MatchIt::matchit(
 m.pairs <- 
 
 # Count the first set of discrepant pairs in a table of treated and control outcomes
-x <-
+x <- 
 
 # Count the second set of discrepant pairs in a table of treated and control outcomes
-y <-
+y <- 
 
 # Sensitivity test for matched binary outcomes
 rbounds::binarysens(
-
 )
 ```
 
@@ -1084,11 +1083,14 @@ EValue::evalues.RR(est = 10.73, lo = 8.02, hi = 14.36)
 
 `konfound` "calculates the impact of an omitted confounding variable necessary to invalidate or sustain an inference for a regression coefficient from the user’s model. It also assesses how strongly an omitted variable has to be correlated with the outcome and the predictor of interest to invalidate or sustain the inference."^[Xu, R., Frank, K. A., Maroulis, S. J., & Rosenberg, J. M. (2019). konfound: Command to quantify robustness of causal inferences. *The Stata Journal*, *19*(3), 523–550. https://doi.org/10.1177/1536867X19874223]
 
+`konfound` calculates two sensitivity measures: the Impact Threshold of a Confounding Variables (ITCV), which generates statements about the correlation of an unobservable with a predictor and the outcome, and the Robustness of an Inference to Replacement (RIR), which assesses how replacing a certain percentage of cases with zero effect could nullify an inference. 
+
 ```{r}
 pacman::p_load(konfound)
 m1 <- lm(mpg ~ wt + hp, data = mtcars)
 tidy(m1)
-konfound::konfound(m1, wt)
+konfound::konfound(m1, wt, index = "RIR")
+konfound::konfound(m1, wt, index = "IT")
 ```
 
 \newpage
