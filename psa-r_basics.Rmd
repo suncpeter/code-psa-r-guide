@@ -209,7 +209,7 @@ imbalance2 <- function(df, varname, treatname, blockname) {
 * Propensity Score Analysis support site: https://ssw.unc.edu/psa/
 * MatchIt package website: https://kosukeimai.github.io/MatchIt/
 * Cobalt package website: https://ngreifer.github.io/cobalt/
-* List of R software for propensity score analysis: https://www.biostat.jhsph.edu/~estuart/propensityscoresoftware.html
+* List of R software for propensity score analysis: https://www.elizabethstuart.org/psoftware/
 * Stuart, E. A. (2010). Matching Methods for Causal Inference: A Review and a Look Forward. *Statistical Science*, *25*(1), 1–21. https://doi.org/10.1214/09-STS313
 * Greifer, N., & Stuart, E. A. (2023). Choosing the Causal Estimand for Propensity Score Analysis of Observational Studies (arXiv:2106.10577). *arXiv*. https://doi.org/10.48550/arXiv.2106.10577
 
