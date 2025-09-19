@@ -1,0 +1,1795 @@
+---
+title: "Propensity Score Analysis in R - Basics"
+author: "Statistical Horizons"
+date: "September 18-20, 2025"
+output:
+  pdf_document:
+    number_sections: no
+    toc: no
+    toc_depth: 4
+header-includes:
+- \usepackage{float}
+- \usepackage{pdflscape}
+- \usepackage{threeparttable}
+- \usepackage{threeparttablex}
+- \usepackage{pgfornament}
+- \usepackage{mathtools}
+- \usepackage{amsmath,amsthm,amssymb}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+- \pagenumbering{gobble}
+---
+
+```{r echo=F, message=F, error=F, warning=F}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tictoc, formatR)
+tic()
+```
+
+```{r include=F}
+# Prevent scientific notation
+options(scipen=999)
+
+# Shenyang Guo's Stata program, hodgesl, version 8.2
+hodgesl <- function(dataname, varname, blockname, treatname) {
+  blockname_str <- deparse(substitute(blockname))
+  set.seed(1000)
+  renamed_file <- dataname %>%
+    filter(!is.na({{ blockname }}))
+  r1 <- renamed_file %>%
+    group_by({{ blockname }}) %>%
+    summarise(m_y = mean({{ varname }}), .groups = "drop") %>%
+    arrange({{ blockname }})
+  r2 <- renamed_file %>%
+    group_by({{ blockname }}, {{ treatname }}) %>%
+    summarise(
+      mean_y = mean({{ varname }}),
+      n = n(), .groups = "drop"
+    ) %>%
+    mutate(mean_diff = ifelse({{ treatname }} == 1,
+      ((n + lag(n)) / sum(n)) * (mean_y - lag(mean_y)), NA
+    )) %>%
+    mutate(tx_effect = sum(mean_diff, na.rm = T)) %>%
+    mutate(i = row_number()) %>%
+    slice(1) %>%
+    select(tx_effect, i)
+  fm_results <- renamed_file %>%
+    group_by({{ blockname }}, {{ treatname }}) %>%
+    summarise(
+      mean_y = mean({{ varname }}),
+      n = n(), .groups = "drop"
+    )
+  r3 <- renamed_file %>%
+    group_by({{ blockname }}, {{ treatname }}) %>%
+    summarise(m_or_n = n(), .groups = "drop") %>%
+    arrange({{ blockname }}, {{ treatname }}) %>%
+    mutate(mi = ifelse({{ treatname }} == 0, m_or_n,
+      ifelse({{ treatname }} == 1, NA, NA)
+    )) %>%
+    mutate(ni = ifelse({{ treatname }} == 1, m_or_n,
+      ifelse({{ treatname }} == 0, NA, NA)
+    )) %>%
+    mutate(Ni = ni + lag(mi)) %>%
+    mutate(mi = ifelse(is.na(mi), lag(mi), mi)) %>%
+    filter(!is.na(Ni)) %>%
+    mutate(factor = (mi * ni) / (Ni * (Ni - 1))) %>%
+    select({{ blockname }}, factor) %>%
+    arrange({{ blockname }})
+  r4 <- renamed_file %>%
+    arrange({{ blockname }}) %>%
+    left_join(r1, by = blockname_str) %>%
+    mutate(dy = {{ varname }} - m_y) %>%
+    arrange(dy) %>%
+    mutate(rk = row_number()) %>%
+    arrange({{ blockname }})
+  r4a <- r4 %>%
+    filter({{ treatname }} != 0) %>%
+    group_by({{ blockname }}) %>%
+    summarise(wsi = sum(rk), .groups = "drop")
+  r5 <- r4 %>%
+    group_by({{ blockname }}) %>%
+    summarise(ki_ = mean(rk), .groups = "drop")
+  r6 <- r4 %>%
+    filter({{ treatname }} != 0) %>%
+    group_by({{ blockname }}) %>%
+    summarise(ni = n(), .groups = "drop") %>%
+    arrange({{ blockname }}) %>%
+    left_join(r5, by = blockname_str) %>%
+    mutate(E_wsi = ni * ki_) %>%
+    arrange({{ blockname }})
+  r7 <- r4 %>%
+    arrange({{ blockname }}) %>%
+    left_join(r5, by = blockname_str) %>%
+    mutate(k = (rk - ki_)^2) %>%
+    group_by({{ blockname }}) %>%
+    summarise(ss_kd_i = sum(k), .groups = "drop") %>%
+    arrange({{ blockname }})
+  results <- r3 %>%
+    arrange({{ blockname }}) %>%
+    left_join(r7, by = blockname_str) %>%
+    left_join(r6, by = blockname_str) %>%
+    left_join(r4a, by = blockname_str) %>%
+    mutate(
+      var_wsi = factor * ss_kd_i,
+      var = sum(var_wsi),
+      sum_Ewsi = sum(E_wsi),
+      ws = sum(wsi),
+      HL_mean = ws - sum_Ewsi,
+      HL_se = sqrt(var),
+      z = HL_mean / HL_se,
+      p = 1 - pnorm(abs(z))
+    ) %>%
+    select(HL_mean, HL_se, z, p) %>%
+    slice(1) %>%
+    mutate(i = row_number()) %>%
+    left_join(r2, by = "i")
+  return(results)
+}
+
+# Imbalance function adapted for covariate table
+imbalance <- function(cov, method) {
+
+  # get quosure
+  cov_name <- cov
+  method_name <- method
+  cov <- rlang::parse_expr(cov)
+  method <- rlang::parse_expr(method)
+
+  # dx
+  df2 <- df %>%
+    group_by(kuse) %>%
+    summarise(m_x := mean(!!cov),
+      sd_x := sd(!!cov),
+      .groups = "drop"
+    )
+  mxt <- df2[2, 2]
+  mxc <- df2[1, 2]
+  s2xt <- df2[2, 3]^2
+  s2xc <- df2[1, 3]^2
+  sx <- sqrt((s2xt + s2xc) / 2)
+  dx <- as.numeric(abs(mxt - mxc) / sx)
+
+  # dxm
+  if (method != "before") {
+    df3 <- df %>%
+      group_by(!!method, kuse) %>%
+      summarise(
+        m_x = mean(!!cov),
+        sd_x = sd(!!cov),
+        n = n(),
+        .groups = "drop"
+      )
+
+    mxc <- as.numeric(mean(filter(df3, kuse == 0)$m_x))
+    mxt <- as.numeric(mean(filter(df3, kuse == 1)$m_x))
+    dxm_num <- abs(mxt - mxc)
+    dxm <- as.numeric(dxm_num / sx)
+
+    return(tibble(cov = cov_name, method = method_name, dx = NA, dxm = dxm))
+  } else {
+    return(tibble(cov = cov_name, method = method_name, dx = dx, dxm = NA))
+  }
+}
+
+# Shenyang Guo's Stata program, imbalance, version 8.2
+imbalance2 <- function(df, varname, treatname, blockname) {
+
+  # dx
+  df2 <- df %>%
+    group_by({{ treatname }}) %>%
+    summarise(m_x = mean({{ varname }}), sd_x = sd({{ varname }}), .groups = "drop")
+  mxt <- df2[2, 2]
+  mxc <- df2[1, 2]
+  s2xt <- df2[2, 3]^2
+  s2xc <- df2[1, 3]^2
+  sx <- sqrt((s2xt + s2xc) / 2)
+  dx <- as.numeric(abs(mxt - mxc) / sx)
+
+  # dxm
+  df3 <- df %>%
+    group_by({{ blockname }}, {{ treatname }}) %>%
+    summarise(
+      m_x = mean({{ varname }}),
+      sd_x = sd({{ varname }}),
+      n = n(),
+      .groups = "drop"
+    )
+
+  mxc <- as.numeric(mean(filter(df3, {{ treatname }} == 0)$m_x))
+  mxt <- as.numeric(mean(filter(df3, {{ treatname }} == 1)$m_x))
+  dxm_num <- abs(mxt - mxc)
+  dxm <- as.numeric(dxm_num / sx)
+
+  return(list(dx = dx, dxm = dxm))
+}
+```
+
+# Helpful Resources
+
+* Propensity Score Analysis support site: https://ssw.unc.edu/psa/
+* MatchIt package website: https://kosukeimai.github.io/MatchIt/
+* Cobalt package website: https://ngreifer.github.io/cobalt/
+* List of R software for propensity score analysis: https://www.biostat.jhsph.edu/~estuart/propensityscoresoftware.html
+* Stuart, E. A. (2010). Matching Methods for Causal Inference: A Review and a Look Forward. *Statistical Science*, *25*(1), 1–21. https://doi.org/10.1214/09-STS313
+* Greifer, N., & Stuart, E. A. (2023). Choosing the Causal Estimand for Propensity Score Analysis of Observational Studies (arXiv:2106.10577). *arXiv*. https://doi.org/10.48550/arXiv.2106.10577
+
+\newpage
+# Conceptual Review
+
+## Basic Concepts
+
+**Causal inference** is inference about *counterfactual outcomes* or *potential outcomes*. An example of a counterfactual is: What would have happened to the treated subjects, had they not received treatment?
+
+(*Notation:* Let $w$ represent a dichotomous treatment variable, where 1 = treated and 0 = untreated, let $Y$ represent a dichotomous outcome variable. $Y_{1i}$ is the potential outcome for unit $i$ with treatment, and $Y_{0i}$ is the potential outcome for unit $i$ without treatment.)
+
+An **individual causal effect** is given by:
+
+$$
+\tau_i = Y_{1i} - Y_{0i}
+$$
+
+The **Neyman-Rubin counterfactual framework** states that individuals selected into treatment and non-treatment groups have potential outcomes in both states: the one in which they are observed and the one in which they are not observed, which can be expressed as:
+
+$$
+Y_i = W_iY_{1i} + (1 - W_i)Y_{0i}
+$$
+
+This framework assumes the **Stable Unit Treatment Value Assumption (SUTVA)**, which assumes that (1) potential outcomes for an individual must not be affected by treatment for other individuals (e.g., spill-over effect); and (2) there are no different versions of the treatment condition (e.g., individuals receive different or variable levels of treatment). 
+
+Because "the fundamental problem of causal inference" is that individual causal effects are unobservable, we generally focus on **average causal effects**. One causal estimand is the **average treatment effect (ATE)**, given by:
+
+$$
+\tau_{ATE} = \frac{1}{N}\sum^N_{i=1}\{Y_{1i} - Y_{0i}\} \text{ or } \tau_{ATE} = \mathbb{E}[Y_{1i} - Y_{0i}]
+$$
+
+If we let $N_1$ equal the number of treated units, then the **average treatment effect on the treated (ATT)** is given by:
+
+$$
+\tau_{ATT} = \frac{1}{N_1}\sum^N_{i=1}W_i\{Y_{1i} - Y_{0i}\} \text{ or } \tau_{ATT} = \mathbb{E}[Y_{1i} - Y_{0i} | W_i = 1]
+$$
+
+The **propensity score** is the probability of receiving the treatment given a vector of observed covariates, $X_i$:
+
+$$
+\pi(X_i) \equiv \text{Pr}\left(W_i = 1 | X_i \right)
+$$
+
+## Greedy Matching
+
+Greedy nearest neighbor matching forms matches by pairing a control participant with a treated participant, if the absolute difference of their propensity scores is the smallest among all possible pairs of propensity scores (i.e., they are similar on their covariates). If a caliper is used, then a match is made only if the absolute difference is less than the caliper.
+
+*Strengths*
+
+* Allows various kinds of post-matching analysis
+* Particularly useful if the outcome variable is non-normal, non-continuous (e.g., categorical dependent variable, time-to-event data)
+* Mahalanobis metric matching can be used to find well-matched pairs when the number of units is small
+
+*Limitations*
+
+* Optimization is only done locally
+* "Bias due to incomplete matching" when treated subjects are excluded^[Austin, P. C. (2014). A comparison of 12 algorithms for matching on the propensity score. *Statistics in Medicine*, *33*(6), 1057–1069. https://doi.org/10.1002/sim.6004]
+* Requires a sizeable common support region
+
+## Optimal Matching
+
+Optimal matching minimizes a global distance measure to form matches. This circumvents the problem in greedy matching, where the order in which the treated are matched affects the quality of the matches. According to Gu and Rosenbaum (1993), "optimal matching picks about the same controls [as greedy matching] but does a better job of assigning them to treated units." Thus, optimal matching and greedy matching tend to produce similar results, but optimal matching may produce better matched pairs.^[Stuart, E. A. (2010). Matching Methods for Causal Inference: A Review and a Look Forward. *Statistical Science*, *25*(1), 1–21. https://doi.org/10.1214/09-STS313]
+
+In optimal pair matching, typically a treated participant is matched to a single control. With variable ratio or variable matching, each treated participant matches to a variable number of controls (because some individuals may have more matches than others).
+
+*Strengths*
+
+* Finds well-matched pairs
+* Full matching uses the entire sample
+* Robust against violations of overlap in common support region
+
+*Limitations*
+
+* Does not necessarily produce better balanced groups than greedy matching
+* Variable matching may increase bias due to poor matches
+
+## Matching with or without Replacement
+
+According to Stuart (2010), matching with replacement is "particularly helpful in settings where there are few control individuals comparable to the treated individuals (e.g., Dehejia and Wahba, 1999). Additionally, when matching with replacement the order in which the treated individuals are matched does not matter. However, inference becomes more complex when matching with replacement, because the matched controls are no longer independent–--some are in the matched sample more than once and this needs to be accounted for in the outcome analysis, for example by using frequency weights. When matching with replacement it is also possible that the treatment effect estimate will be based on just a small number of controls; the number of times each control is matched should be monitored."^[Stuart, E. A. (2010). Matching Methods for Causal Inference: A Review and a Look Forward. *Statistical Science*, *25*(1), 1–21. https://doi.org/10.1214/09-STS313]
+
+A simulation study comparing 12 propensity score algorithms found that "matching with replacement did not result in estimates with less bias compared with the best-performing methods based on caliper matching without replacement. Furthermore, matching with replacement resulted in estimates that displayed greater variability and that had higher MSE compared with estimates obtained using caliper matching without replacement."^[Austin, P. C. (2014). A comparison of 12 algorithms for matching on the propensity score. *Statistics in Medicine*, *33*(6), 1057–1069. https://doi.org/10.1002/sim.6004]
+
+According to Abadie & Imbens (2006), "Matching with replacement produces matches of higher quality than matching without replacement by increasing the set of possible matches. In addition, matching with replacement has the advantage that it allows us to consider estimators that match all units, treated as well as controls, so that the estimand is identical to the population average treatment effect."^[Abadie, A., & Imbens, G. W. (2006). Large Sample Properties of Matching Estimators for Average Treatment Effects. *Econometrica*, *74*(1), 235–267. https://doi.org/10.1111/j.1468-0262.2006.00655.x]
+
+## Propensity Score Weighting
+
+Unlike matching, propensity score weighting balances data by using propensity scores to create weights. It makes the estimate of the sample average treatment effect or its inference to the population average treatment effect a weighted average of the difference between observed and potential outcomes. It is similar to the weighted analysis that is conducted when analyzing complex survey designs. To estimate the ATE, the treatment weights are $1/\hat{e}(x)$, where $\hat{e}(x)$ is the propensity score, and the control weights are $1/(1 - \hat{e}(x))$---this is known as the inverse probability of treatment weights (IPTW) estimator. To estimate the ATT, the treatment weight is 1, and the control weights are $\hat{e}(x)/(1 - \hat{e}(x))$. 
+
+*Strengths*
+
+* Permits most types of multivariate outcome analyses
+* Does not require an outcome variable that is continuous or normally distributed
+* Retains most participants in the outcome analysis
+* Flexible in the context of complex surveys^[DuGoff, E. H., Schuler, M., & Stuart, E. A. (2014). Generalizing Observational Study Results: Applying Propensity Score Methods to Complex Surveys. *Health Services Research*, *49*(1), 284–303. https://doi.org/10.1111/1475-6773.12090]
+
+*Limitations*
+
+* Variance can be large if weights are extreme^[Austin, P. C., & Stuart, E. A. (2015). Moving towards best practice when using inverse probability of treatment weighting (IPTW) using the propensity score to estimate causal treatment effects in observational studies. *Statistics in Medicine*, *34*(28), 3661–3679. https://doi.org/10.1002/sim.6607]
+
+## Matching Estimators
+
+Matching estimators directly impute missing potential outcomes at the unit level using a vector norm. After imputing the missing data, matching estimators can be used to estimate various average treatment effects. Instead of using logistic regression to predict propensity scores, matching estimators use a vector norm to calculate distances on the observed covariates between a treated case and each of its potential control cases. These calculations use either the inverse of the sample variance matrix or the inverse of the sample variance-covariance matrix. When using the inverse of the sample variance-covariance matrix, the matching estimator calculates Mahalanobis metric distances.
+
+*Strengths*
+
+* Calculate a variety of average treatment effects
+* Estimate effects for both the sample and the population
+
+*Liimtations*
+
+* Require a sizeable common support region
+* More sensitive to the violation of the strongly ignorable assumption
+
+\newpage
+# 3.5 Computer Lab: Running Greedy Matching and GBR with R
+
+## Greedy Nearest Neighbor Matching
+
+Greedy nearest neighbor matching forms matches by pairing a control participant with a treated participant, if the absolute difference of their propensity scores is the smallest among all possible pairs of propensity scores (i.e., they are similar on their covariates). If a caliper is used, then a match is made only if the absolute difference is less than the caliper.
+
+### Load Packages
+
+The `haven` and `sjlabelled` packages are used to load and clean Stata data files (.dta); the `MatchIt` package contains functions for greedy matching^[https://kosukeimai.github.io/MatchIt/articles/matching-methods.html]; the `cobalt` package contains functions for balance checking; and the `tidyverse` package is loaded for its data manipulation functions.
+
+```{r message=F, warning=F, error=F}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(
+  haven, sjlabelled, cobalt, MatchIt, tidyverse, kableExtra, survival, psych, here
+)
+```
+
+### Description of Data
+
+This data is a sample of 2,758 children from the National Survey of Child and Adolescent Well-Being (NSCAW), a nationally representative, longitudinal survey of children and families who have been the subjects of investigation by Child Protective Services. Two waves of NSCAW data were used: baseline information between October 1999 and December 2000 and the 18-months follow-up. The sample was limited to children who lived at home (e.g., were not in foster care) and whose primary caregivers were female (because the vast majority of primary caregivers in NSCAW were females). The treatment condition is `aodserv` or caregivers who received (aodserv = 1) or did not receive (aodserv = 0) substance abuse services. Two matching procedures are illustrated here. In Section 5.8.1 of the PSA-R code, 12 matching schemes are shown.^[https://ssw.unc.edu/psa/]
+
+### Load and Clean Data
+
+```{r echo=T, results="hide"}
+# Load Data
+gm_df0 <- haven::read_dta(here("data", "chpt5_1_original.dta"))
+
+# Inspect Data
+str(gm_df0)
+
+# Remove Stata Labels and Formats
+gm_df0 <- gm_df0 %>%
+  haven::zap_formats() %>%
+  sjlabelled::remove_all_labels() %>%
+  as_tibble()
+
+# Inspect Data
+str(gm_df0)
+psych::describe(gm_df0)
+nrow(gm_df0)
+table(gm_df0$aodserv)
+```
+
+### Sort Data
+
+When non-treated cases have the same propensity score values, their matches will depend on the order of the data. Therefore, it’s important to order the observations randomly.
+
+```{r echo=T, results="hide"}
+set.seed(1000)
+gm_df <- gm_df0 %>%
+  add_column(runif = runif(nrow(.)), .before = "PSH17A") %T>% print() %>%
+  arrange(runif) %T>% print() %>%
+  select(-runif)
+```
+
+### Check Balance Before Matching
+
+Because all of the variables that will be used for predicting the propensity scores of service receipt are categorical, we can use `chisq.test` to check their balance before matching. Before we do that, we convert these categorical variables from numeric variables to factor variables using `as.factor()`. This will help functions such as `bal.tab()` to automatically calculate appropriate balance statistics.
+
+```{r error=F, message=F, warning=F}
+# Change categorical independent variables to factor variables, except the id and
+# and aodserv treatment variables
+gm_df <- gm_df %>%
+  mutate(across(c(-id, -aodserv), as.factor))
+
+# Marital Status (large sample size, therefore continuity correction not needed)
+chisq.test(gm_df$aodserv, gm_df$married, correct = F)
+
+# All Variables
+gm_df %>%
+  select(
+    married, educ, pov, employ, open, race, chdage, cgage, CRA47A, mental,
+    arrest, PSH17A, maltx, ra, cidi, cgneed, cwwrep, aodserv
+  ) %>%
+  pivot_longer(-aodserv, names_to = "variable") %>%
+  group_by(variable) %>%
+  nest() %>%
+  mutate(bivariate.test = map(data, ~chisq.test(.$aodserv, .$value, correct = F))) %>%
+  mutate(statistic = map(bivariate.test, ~ round(.$statistic, 3))) %>%
+  mutate(p.value = map(bivariate.test, ~ round(.$p.value, 3))) %>%
+  unnest(cols = c(statistic, p.value)) %>%
+  select(variable, statistic, p.value)
+
+# Fisher's Exact Test for cgage
+(c1 <- chisq.test(gm_df$aodserv, gm_df$cgage, correct = F))
+c1$expected
+fisher.test(gm_df$aodserv, gm_df$cgage)
+```
+
+Alternatively, the `cobalt` package provides several convenient functions for assessing balance.
+
+The standardized mean difference (SMD) (also referred to as the "normalized difference") is a commonly used balance measure.^[The disadvantage of hypothesis tests is "they are influenced by sample size, which fluctuates during adjustment, and the theory behind them is inappropriate because balance is a quality solely of the sample in question, not in relation to a population" (https://cran.r-project.org/web/packages/cobalt/vignettes/cobalt.html).] It is calculated as the difference in means of a covariate across the treatment groups, divided by the standard deviation in the treated group (ATT), the control group (ATC), or the pooled standard deviation (ATE). See `?cobalt::col_w_smd` for additional options. Stuart et al. (2013) recommend 0.1 or 0.25 as reasonable cut-offs for acceptable standardized biases.^[Stuart, E. A., Lee, B. K., & Leacy, F. P. (2013). Prognostic score–based balance measures for propensity score methods in comparative effectiveness research. *Journal of Clinical Epidemiology*, 66(8 0), S84-S90.e1. https://doi.org/10.1016/j.jclinepi.2013.01.013]
+
+```{r fig.width=6, fig.height=3.5, fig.align="center"}
+# Balance table
+cobalt::bal.tab(
+  select(
+    gm_df, married, educ, pov, employ, open, race, chdage, cgage, CRA47A,
+    mental, arrest, PSH17A, maltx, ra, cidi, cgneed, cwwrep
+  ),
+  treat = gm_df$aodserv,
+  s.d.denom = "treated", # ATT
+  threshold = .1,
+  stats = "mean.diff",
+  continuous = "std",
+  binary = "std"
+)
+
+# Love plot
+cobalt::love.plot(
+  select(
+    gm_df, married, educ, pov, employ, open, race, chdage, cgage, CRA47A,
+    mental, arrest, PSH17A, maltx, ra, cidi, cgneed, cwwrep
+  ),
+  treat = gm_df$aodserv,
+  binary = "std",
+  s.d.denom = "treated",
+  threshold = .1,
+  sample.names = c("Unmatched")
+) +
+  labs(title = "Covariate Balance Before Matching")
+```
+
+\newpage
+### Greedy Nearest Neighbor Matching Without Replacement
+
+By default, the `MatchIt::matchit()` function performs greedy nearest neighbor matching without replacement, therefore the `method = "nearest"` and `replace = F` arguments do not need to be specified. Non-replacement means that once a treated case is matched to a non-treated case, both cases are removed from the pool. Matching with replacement allows each control unit to be matched with any number of treated units.
+
+To avoid dissimilar matches, we can constrain matches so that the absolute distance of propensity scores between two participants is less than a specified tolerance for matching or a caliper. The width of the caliper is by default in standard deviation units and can be specified using the `caliper` argument. A wide caliper may result in more matches and a larger sample, but inexact matching may occur as indicated by large distances on the propensity score between the treated and nontreated cases. Using varying caliper sizes can test the sensitivity of the findings. Here we use a caliper size of a quarter of a standard deviation, which is suggested by Rosenbaum and Rubin (1985). Austin (2011) recommends a caliper size of 0.2 of the standard deviation.^[https://pubmed.ncbi.nlm.nih.gov/20925139/]
+
+The order of the matching can be specified using the `m.order` argument. If this argument is set to `largest`, then matching begins with the treated subject with the highest propensity score; if set to `smallest`, then matching takes places in ascending order of the distance measures; and if `random`, matching takes place in a random order. "The default is to go in descending order from the highest propensity score; doing so allows the units that would have the hardest time finding close matches to be matched first."^[https://kosukeimai.github.io/MatchIt/articles/matching-methods.html] Note that when non-treated cases have the same propensity score values, their matches will depend on the order of the data. Thus, it is still important to randomly shuffle your data prior to matching.
+
+Finally, the logit of the predicted probability from a logistic regression model can be supplied to the `distance` argument. The logit of the predicted probability is used, because the logit is approximately normally distributed. Matching on the logit also improves balance, compared to matching on the raw propensity score. To calculate this automatically, set `distance="glm"` and `link="logit"`.
+
+The choice of explanatory variables (i.e., conditioning variables) in the model predicting propensity scores of service receipt serves a paramount role in the propensity score analysis. We chose these variables based on a review of substance abuse literature to determine what characteristics were associated with treatment receipt:
+
+```{r}
+# Logistic regression specification
+(gm_f <- cobalt::f.build("aodserv", select(gm_df, PSH17A:other, -aodserv)))
+```
+
+We then calculate the logit of the predicted probability as the propensity score:
+
+```{r}
+gm_psm <- glm(gm_f, data = gm_df, family = binomial)
+gm_ps <- predict(gm_psm, newdata = gm_df, type = "response")
+gm_ps_logit <- log((1 - gm_ps) / gm_ps)
+```
+
+And then perform greedy nearest neighbor matching without replacement
+
+```{r}
+set.seed(1000)
+(gm_out <- MatchIt::matchit(
+  gm_f,
+  data = gm_df,
+  distance = gm_ps_logit,
+  m.order = "largest", # descending order
+  caliper = .25
+))
+```
+
+Notice that a limitation of using calipers is that only 283 out of 298 of the original treated cases were matched. This matching scheme reduces the sample size from 2758 to 566---283 cases in the control group and 283 cases in the treated group.
+
+```{r}
+set.seed(1000)
+(gm_out_20 <- MatchIt::matchit(
+  gm_f,
+  data = gm_df,
+  distance = gm_ps_logit,
+  m.order = "largest", # descending order
+  caliper = .20
+))
+```
+
+The `matchit` object will return a `match.matrix`, which contains the treated units as the rownames and the values in each row the names or indices of the control units matched to the treated units:
+
+```{r}
+head(gm_out$match.matrix)
+```
+
+Remember to use weights when estimating the treatment effect (but this is not necessary when 1:1 matching without replacement was performed):
+
+```{r}
+head(gm_out$weights)
+```
+
+#### Check Common Support
+
+Greedy matching is criticized, because it requires a sizeable common-support region to work. The common support region is defined as the region bounded by the maximum value of estimated propensity scores for the treated participants and by the minimum value of the estimated propensity scores for the nontreated participants. In this example, a sizeable common-support region exists. The `discard` argument in `matchit()` can be used to discard units outside a region of common support.
+
+```{r fig.width=6, fig.height=3.5, fig.align="center"}
+cobalt::bal.plot(gm_out, var.name = "distance")
+```
+
+#### Check Balance
+
+Covariate balance can be assessed using hypothesis tests, such as `chisq.test`:
+
+```{r}
+# Extract matched data
+gm_out_data <- MatchIt::match.data(gm_out)
+
+# Assess balance on "ra"
+chisq.test(gm_out_data$ra, gm_out_data$aodserv)
+```
+
+The object from `matchit()` can be directly used in `cobalt` functions to produce balance tables and plots. To specify additional variables for which to display balance, use the argument `addl` in conjunction with the `data` argument.
+
+```{r fig.width=6, fig.height=3.5, fig.align="center"}
+cobalt::love.plot(gm_out,
+  binary = "std", threshold = c(m = .1), drop.distance = T,
+  addl = c("ra", "cidi", "cgneed", "cwwrep"), data = gm_df,
+  sample.names = c("Unmatched", "Matched")
+)
+cobalt::bal.tab(gm_out,
+  binary = "std", threshold = c(m = .1), un = T,
+  addl = c("ra", "cidi", "cgneed", "cwwrep"), data = gm_df
+)
+```
+
+\newpage
+### Greedy Nearest Neighbor Mahalanobis Distance Matching Without Replacement
+
+Here we perform Mahalanobis distance matching without replacement and without including estimated propensity scores by setting the `distance` argument to "mahalanobis." If propensity scores need to be estimated, the argument `mahvars` can be used to specify the variables used to create the Mahalanobis distance, while the `distance` argument should be either a vector of the propensity scores or whatever method is desired for estimating the propensity scores.
+
+```{r}
+set.seed(1000)
+(gm_out2 <- MatchIt::matchit(
+  gm_f,
+  data = gm_df,
+  method = "nearest",
+  distance = "mahalanobis",
+  replace = F
+))
+```
+
+#### Check Balance
+
+```{r fig.width=6, fig.height=3.5, fig.align="center"}
+cobalt::love.plot(gm_out2,
+  binary = "std", threshold = c(m = .1),
+  addl = c("ra", "cidi", "cgneed", "cwwrep"), data = gm_df,
+  sample.names = c("Unmatched", "Matched")
+)
+cobalt::bal.tab(gm_out2,
+  binary = "std", threshold = c(m = .1),
+  addl = c("ra", "cidi", "cgneed", "cwwrep"), data = gm_df
+)
+```
+
+As seen above, balance has not been achieved in multiple covariates. According to Stuart (2010), "the Mahalanobis distance can work quite well when there are relatively few covariates (fewer than 8), but it does not perform as well when the covariates are not normally distributed or there are many covariates."^[Stuart, E. A. (2010). Matching Methods for Causal Inference: A Review and a Look Forward. *Statistical Science*, *25*(1), 1–21. https://doi.org/10.1214/09-STS313]
+
+#### Extract Matched Data
+
+After matching, the treatment effect can be estimated using the matched sample, which can be extracted using the `MatchIt::match.data()` function.
+
+```{r echo=T, results="hide"}
+MatchIt::match.data(gm_out2)
+```
+
+\newpage
+## Propensity Score Estimation Using Generalized Boosted Regression
+
+Generalized boosted regression is an iterative method for creating propensity scores. It uses an automated, data-adaptive algorithm that fits several models by way of a regression tree, and then merges the predictions produced by each model. The regression tree partitions the sample into small groups based on predictor variables.
+
+GBR is a sum of regression trees. These trees are computationally fast to fit, and they are invariant to one-to-one transformations of the independent variables. Its advantage over logistic regression is that it doesn't require knowing the functional form of predictor variables.
+
+### Load Package
+
+Generalized boosted regression (GBR) requires the `gbm` package.
+
+```{r message=F, warning=F, error=F}
+pacman::p_load(gbm)
+```
+
+### Load Data and Sort
+
+After importing the data, missing data is deleted listwise, and the data is sorted randomly. According to the `gbm` package vignette, if the data is sorted in a systematic way, then the data should be shuffled before running `gbm`. To create reproducible results, we need to use the `set.seed()` function.
+
+```{r}
+set.seed(1000)
+gbr_df <- read_dta(here("data", "g3aca1.dta")) %>%
+  haven::zap_formats() %>%
+  sjlabelled::remove_all_labels() %>%
+  as_tibble() %>%
+  select(
+    intbl, ageyc, fmale, blck, whit, hisp, pcedu, ipovl, pcemft, fthr,
+    dicsagg2, dicsint2, dccereg2, dccscom2, dccpros2, draggr2
+  ) %>%
+  drop_na() %>%
+  add_column(runif = runif(nrow(.))) %>%
+  arrange(runif) %>%
+  select(-runif)
+```
+
+### Fit Generalized Boosted Regression Model
+
+The `gbm::gbm()` function has many arguments that can be fine-tuned. See `?gbm` for a detailed description of each argument. For example, to reduce prediction error, the `train.fraction` argument can be set to use a subsample of the observations for the estimation process. Here we also use `interaction.depth = 4` to specify a maximum of four splits for each sample tree used in the model, which allows all four-way interactions between all covariates to be considered for optimizing the likelihood function at each iteration. The `shrinkage` argument is also known as the learning rate or step-size reduction; we use a value of .0005 to ensure a smooth fit.
+
+A summary of the fitted model provides us with *relative influence*, which is the percentage of log likelihood explained by each input variable. The percentages of influence for all predictor variables sum to 100%.
+
+The GBM ouput showed that `blck` had the strongest influence on the likelihood function (33.7%), followed by `ageyc` (16.3%) and `draggr2` (9.4%).
+
+```{r message=F, fig.width=6, fig.height=3.5, fig.align="center"}
+(gbr_f <- cobalt::f.build("intbl", select(gbr_df, -intbl)))
+
+set.seed(1000)
+gbr_m1 <- gbm::gbm(
+  formula = gbr_f,
+  data = gbr_df,
+  distribution = "bernoulli",
+  n.trees = 1000, # number of trees to fit
+  train.fraction = 0.8, # a random 80% subsample for estimation
+  interaction.depth = 4, # allow all four-way interactions
+  shrinkage = 0.0005 # small shrinkage to ensure smooth fit
+)
+summary(gbr_m1)
+```
+
+### Estimate Propensity Scores
+
+After fitting the model, estimate propensity scores using the `predict.gbm()` function.
+
+```{r message=F, warning=F, error=F}
+psb <- gbm::predict.gbm(gbr_m1, data = gbr_df, type = "response")
+head(psb)
+```
+
+\newpage
+### Plot Propensity Score Distributions
+
+As seen in the figure below, the propensity scores estimated by GBM has some overlap between the control and treatment groups (i.e., "common support").
+
+```{r fig.width=6, fig.height=3.5, fig.align="center"}
+gbr_df %>%
+  mutate(psb = psb, intbl = factor(intbl, labels = c("Control", "Treatment"))) %>%
+  ggplot(aes(x = psb, color = intbl)) +
+  theme_classic() +
+  geom_density(linewidth = 1) +
+  xlim(0, 1) +
+  ylim(0, 22) +
+  labs(
+    x = "Predicted Probability", y = "Density",
+    title = "Propensity Scores Using Generalized Boosted Regression",
+    color = "Treatment"
+  ) +
+  theme(legend.position = c(0.9, 0.85))
+```
+
+### Summary Statistics of Propensity Scores
+
+```{r}
+summary(psb)
+```
+
+\newpage
+
+### GBR Using the WeightIt Package
+
+As an alternative to the `gbm` package, the `WeightIt` package can also fit GBR models. Note that the default maximum number of trees used (the `n.trees` argument) is 10000 for binary treatments.
+
+```{r message=F, fig.width=6, fig.height=3.5, fig.align="center"}
+set.seed(1000)
+(gbr_m2 <- WeightIt::weightit(
+  formula = gbr_f,
+  data = gbr_df,
+  method = "gbm",
+  estimand = "ATE",
+  distribution = "bernoulli", # binary treatment
+  stop.method = "es.mean",
+  n.trees = 10000,
+  nTrain = 0.8 * nrow(gbr_df),
+  interaction.depth = 4,
+  shrinkage = 0.0005
+))
+
+# Propensity Scores
+head(gbr_m2$ps)
+```
+
+\newpage
+#### Check Balance
+
+Using a standardized mean difference cut-off point of 0.1, it can be seen below that balance has been achieved in most, but not all, of the covariates:
+
+```{r message=F, fig.width=6, fig.height=3.5, fig.align="center"}
+cobalt::love.plot(gbr_m2,
+  thresholds = c(m = .1),
+  binary = "std", abs = T, drop.distance = T,
+  sample.names = c("Unmatched", "Matched")
+) +
+  labs(title = "Covariate Balance (ATE)")
+```
+
+### Other Packages
+
+GBR is also implemented in the `MatchIt::matchit()` and `twang::ps()` functions. While the `gbm` package is used in both, each function uses a different set of default arguments. See their respective help files for more details.
+
+\newpage
+# 4.7 Computer Lab: Imbalance Check and Outcome Analysis with R after optmatch
+
+## Optimal Matching
+
+### Load Packages
+
+```{r message=F, warning=F, error=F}
+pacman::p_load(optmatch, knitr, broom, sandwich, rlang, marginaleffects)
+select <- dplyr::select
+```
+
+### Load Data
+
+This dataset comes from a study that investigates intergenerational dependence on welfare and its relation to child academic achievement.
+
+The dependent variable is `lwss97`, the age-normed "letter-word" identification score of the Woodcock-Johnson Revised Tests of Achievement. A high score on this measure indicates high achievement. The treatment variable is `kuse` or children who ever used Aid to Families With Dependent Children (AFDC). The covariates are:
+
+- `mratio96`: Ratio of Family Income to Poverty Line in 1996
+- `pcged97`: Caregiver's Education in 1997 (Years of Schooling)
+- `pcg_adc`: Caregiver's History of Using Welfare (Number of Years; range: 0-7)
+- `black`: Child's Race: African American (1 = African American; 0 = Other)
+- `age97`: Child's Age in 1997
+- `male`: Child's Gender: Male (1 = Male; 0 = Female)
+
+```{r message=FALSE, warning=FALSE}
+d <- haven::read_dta("data/opt/chpt5_2_original.dta")
+df <- haven::read_dta("data/opt/chpt5_2.dta")
+cds <- haven::read_dta("data/opt/chpt5_2ps.dta")
+```
+
+### Bivariate Comparisons 
+
+With the exception of child's gender, the difference on each covariate between treated and control groups is statistically significant. Without controlling for these covariates, the study's estimate of treatment effect would be biased.
+
+```{r message=FALSE, warning=FALSE}
+# Intergenerational dependence
+chisq.test(d$kuse, d$puse, correct = F)
+
+# Wilcoxon Rank-Sum (Mann-Whitney) test and t-test
+d %>%
+  select(mratio96, pcged97, pcg_adc, black, age97, male, kuse) %>%
+  pivot_longer(-kuse, names_to = "variable") %>%
+  group_by(variable) %>%
+  nest() %>%
+  mutate(wilcoxon = map(data, ~ wilcox.test(.$value ~ .$kuse, correct = F))) %>%
+  mutate(wilcoxon.stat = map(wilcoxon, ~ round(.$statistic, 3))) %>%
+  mutate(wilcoxon.pvalue = map(wilcoxon, ~ round(.$p.value, 3))) %>%
+  unnest(cols = c(wilcoxon.stat, wilcoxon.pvalue)) %>%
+  mutate(ttest = map(data, ~ t.test(.$value ~ .$kuse, var.equal = T))) %>%
+  mutate(t.stat = map(ttest, ~ round(.$statistic, 3))) %>%
+  mutate(t.pvalue = map(ttest, ~ round(.$p.value, 3))) %>%
+  unnest(cols = c(t.stat, t.pvalue)) %>%
+  select(-data, -wilcoxon, -ttest)
+
+# SMD Balance Checks
+(c1 <- cobalt::bal.tab(
+  x = d %>% select(mratio96, pcged97, pcg_adc, black, age97, male),
+  treat = d$kuse,
+  binary = "std",
+  threshold = c(m = .1),
+  s.d.denom = "pooled"
+))
+(cobalt::love.plot(c1, sample.names = c("Unmatched")))
+```
+
+### Outcome Models Without Bias Control
+
+We first observe that the control group had a higher letter-word identification score than the treatment group:
+
+```{r}
+d %>%
+  ggplot(aes(y = lwss97, x = factor(kuse))) +
+  geom_boxplot() +
+  labs(x = "Treatment", y = "Letter-Word Identification Score") +
+  scale_x_discrete(labels = c("Control", "Treated")) +
+  theme_classic()
+```
+
+We can estimate the ATE using an independent samples $t$ test. It shows that the treated group on average had a mean letter-word identification score that was 9.82 points lower than that of the control group ($p < .001$).
+
+```{r}
+t.test(lwss97 ~ kuse, data = d, var.equal = T) %>%
+  broom::tidy()
+```
+
+We can also estimate the ATE using an OLS regression model. It shows that, controlling for covariates, the treated group on average had a letter-word identification score that is 4.73 points lower than that of the control group (p < .001).
+
+```{r}
+reg <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96 + pcg_adc,
+  data = d
+)
+broom::tidy(lmtest::coeftest(reg, vcov = sandwich::vcovCL, cluster = d$pcg_id))
+```
+
+\newpage
+### Matching
+
+*Note: To be consistent with the STATA result, we will use the propensity scores created by Stata.*
+
+#### Distribution of estimated propensity scores
+
+As seen in the figures below, there is no sizeable common support region of the estimated propensity scores by treatment status, so using greedy matching would produce a nontrivial loss of matched participants. Therefore, we decide to use optimal matching.
+
+```{r message=F, warning=F, error=F, fig.width=4, fig.height=2.5, fig.align="center"}
+cds %>%
+  ggplot(aes(x = factor(kuse), y = ps)) +
+  geom_boxplot() +
+  labs(y = "Propensity Score", x = "Treatment Condition") +
+  scale_x_discrete(labels = c("Control", "Treatment")) +
+  theme_classic()
+
+cds %>%
+  ggplot(aes(x = ps, color = factor(kuse))) +
+  geom_histogram(aes(y = ..density..), fill = "white", position = "dodge") +
+  geom_density(alpha = .2, fill = "#FF6666") +
+  labs(y = "Density", x = "Propensity Score", color = "Treatment Condition") +
+  scale_color_discrete(labels = c("Control", "Treatment")) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+```
+
+We would lose 64.3% cases if we used nearest neighbor matching without replacement within specified caliper widths:
+
+```{r}
+(nn_test <- matchit(kuse ~ mratio96 + pcged97 + pcg_adc + black + age97 + male,
+  data = d,
+  method = "nearest",
+  distance = "glm",
+  replace = F,
+  caliper = .25
+))
+(nrow(d) - nrow(match.data(nn_test))) / nrow(d)
+```
+
+\newpage
+#### Optimal Matching
+
+The first argument that `optmatch::fullmatch()` requires is "a matrix of non-negative discrepancies, each indicating the permissibility and desirability of matching the unit corresponding to its row (treated) to the unit corresponding to its column (control)." First, we calculate the sample ranks of the propensity scores generated by generalized boosted regression using `rank(ps)`. Second, we use `outer(x, y, "-")`, which will subtract $y$ control units from $x$ treated units, to form a matrix with rows equal to the number of treated subjects and columns equal to the number of control subjects. Finally, we take the absolute value of these differences.
+
+By default, `min.controls` or the minimum ratio of controls to treatments that is to be permitted within a matched set is zero, and `max.controls` or the maximum ratio of controls to treatments is infinite.
+
+Hansen found that in the context of a specific application, variable matching with a specific structure worked best; that is, each treated participant was matched to at least $\frac{.5(1 - \hat{P})}{\hat{P}}$ controls and at most $\frac{2(1 - \hat{P})}{\hat{P}}$ controls, where $\hat{P}$ represents the proportion of treated participants in the sample. In this example, $\hat{P} = \frac{274}{729 + 274} = 27.32\%$, so the number of minimum controls is $\frac{.5(1 - .2732)}{.2732} = 1.33$, and the number of maximum controls is $\frac{2(1 - .2732)}{.2732} = 5.32$. There is a variance trade-off when selecting a variable number of controls, because the additional controls are generally less similar than the first closest match as the treated individual, which would increase bias, while the increase in sample size can decrease variance.^[Stuart, E. A. (2010). Matching Methods for Causal Inference: A Review and a Look Forward. *Statistical Science*, *25*(1), 1–21. https://doi.org/10.1214/09-STS313]
+
+For `optmatch::pairmatch()`, we can set the number of controls to be matched to each treatment using the `controls` argument.
+
+```{r message=F, warning=F, error=F, results="hide"}
+attach(cds)
+prank <- rank(ps)
+names(prank) <- kid
+d1 <- outer(prank[kuse == 1], prank[kuse == 0], "-")
+d1 <- abs(d1)
+table(cds$kuse) # 729 control, 274 treated
+dim(d1) # 274 x 729
+
+# Full matching
+fm <- fullmatch(d1)
+(fm.d <- matched.distances(fm, d1, pres = TRUE))
+max(unlist(fm.d))
+
+# Variable Matching (at least 1, at most 4)
+vm1 <- fullmatch(d1, min.controls = 1, max.controls = 4)
+(vm1.d <- matched.distances(vm1, d1, pres = TRUE))
+max(unlist(vm1.d))
+
+# Variable Matching (at least 2, at most 4)
+vm2 <- fullmatch(d1, min.controls = 2, max.controls = 4)
+(vm2.d <- matched.distances(vm2, d1, pres = TRUE))
+max(unlist(vm2.d))
+
+# Variable Matching (using Hensen's equation)
+vm3 <- fullmatch(d1, min.controls = 1.33, max.controls = 5.32)
+(vm3.d <- matched.distances(vm3, d1, pres = TRUE))
+max(unlist(vm3.d))
+
+# Variable Matching (at least 2, at most 7)
+vm4 <- fullmatch(d1, min.controls = 2, max.controls = 7)
+(vm4.d <- matched.distances(vm4, d1, pres = TRUE))
+max(unlist(vm4.d))
+
+# 1:1 Pair Matching
+pm <- pairmatch(d1, controls = 1)
+(pm.d <- matched.distances(pm, d1, pres = TRUE))
+max(unlist(pm.d))
+```
+
+Optimal matching aims to minimize the total sample distance of propensity scores. We can extract the distances of matched units from their matched counterpairs using `optmatch::matched.distances()` and then calculate the total distance using `sum(unlist())`. The ratio of treatment to control and the number of strata for each structure can be inspected with `optmatch::stratumStructure()`.
+
+```{r message=F, warning=F, error=F}
+mean(unlist(fm.d))
+sum(unlist(fm.d))
+stratumStructure(fm)
+
+mean(unlist(vm1.d))
+sum(unlist(vm1.d))
+stratumStructure(vm1)
+
+mean(unlist(vm2.d))
+sum(unlist(vm2.d))
+stratumStructure(vm2)
+
+mean(unlist(vm3.d))
+sum(unlist(vm3.d))
+stratumStructure(vm3)
+
+mean(unlist(vm4.d))
+sum(unlist(vm4.d))
+stratumStructure(vm4)
+
+mean(unlist(pm.d))
+sum(unlist(pm.d))
+stratumStructure(pm)
+```
+
+#### Covariate Imbalance Before and After Matching by Matching Scheme
+
+```{r message=F, warning=F}
+# Define covariates
+cov_labels <- tibble(
+  cov = c(
+    "mratio96", "pcged97", "pcg_adc",
+    "black", "age97", "male"
+  ),
+  new = c(
+    "Ratio of family income to poverty line in 1996",
+    "Caregiver's education in 1997 (years of schooling)",
+    "Caregiver's number of years using AFDC in childhood",
+    "Child's race: African American (reference: other)",
+    "Child's age in 1997", "Child's gender: male (reference: female)"
+  ),
+  order = c(1, 2, 3, 4, 5, 6)
+)
+
+# Calculate dx and dxm using imbalance()
+arg1 <- rep(c("mratio96", "pcged97", "pcg_adc", "black", "age97", "male"), each = 7)
+arg2 <- rep(c("before", "fm", "vm1", "vm2", "vm3", "vm4", "pm"), length(arg1) / 7)
+table_5.10 <- map2_dfr(arg1, arg2, imbalance) %>%
+  mutate(method = recode(method,
+    `before` = "Before Matching",
+    `fm` = "Full Matching",
+    `vm1` = "Variable Matching 1 (at least 1, at most 4)",
+    `vm2` = "Variable Matching 2 (at least 2, at most 4)",
+    `vm3` = "Variable Matching 3 (Hansen's equation)",
+    `vm4` = "Variable Matching 4 (at least 2, at most 7)",
+    `pm` = "Pair matching"
+  )) %>%
+  left_join(cov_labels, by = "cov") %>%
+  arrange(order) %>%
+  select(cov, matching_scheme = method, dx, dxm) # or replace cov with new
+
+# Print Table
+print(table_5.10, n = 42)
+```
+
+### Post-Full-Matching Analysis of Outcome
+
+#### Hodges-Lehmann Aligned Rank Test 
+
+The Hodges-Lehmann aligned rank test can be used on matched samples created by full matching or variable matching. We used full matching and found that children who used AFDC had a letter-word identification score in 1997 that was on average 1.97 points lower than those who had never used AFDC; the difference was statistically significant at a $.05$ level (one-tailed). We used the Hodges-Lehmann test to gauge the statistical significance. The study also detected an effect size of .19, which is a small effect size in terms of Cohen's (1988) criteria.
+
+```{r}
+hodgesl(df, lwss97, fm, kuse)
+```
+
+#### Cohen's d
+
+```{r}
+imbalance2(df, lwss97, kuse, fm)$dxm # dxm for the outcome variable is Cohen's d
+```
+
+### Post-Matching Analysis Using Regression of Difference Scores
+
+A regression of difference scores may be performed on matched samples created by optimal pair matching. Based on the pair-matched sample, we first calculated difference scores between treated and control cases for each pair on all study variables (i.e., on the outcome variable and all covariates). We then regressed the difference score of the outcome on the difference scores of covariates. In addition, note that our model includes a correction for clustering effects (i.e., children are nested within caregivers) that we accomplished by using robust estimates of standard errors. The intercept of a difference score regression indicates the ATE of the sample. The estimated intercept from this model is -3.17 ($p < .05$). Thus, using pair matching and regression adjustment, the study found that, on average, children who used AFDC had a letter-word identification score in 1997 that was 3.17 points lower than do children who never used AFDC; this finding was statistically significant.
+
+```{r message=FALSE, warning=FALSE}
+# kuse == 1
+df1 <- df %>%
+  select(pm, kuse,
+    y1 = lwss97, male1 = male, black1 = black, age971 = age97,
+    pcged971 = pcged97, mratio961 = mratio96, pcg_id
+  ) %>%
+  filter(kuse == 1)
+
+# kuse == 0
+df0 <- df %>%
+  select(pm, kuse,
+    y0 = lwss97, male0 = male, black0 = black, age970 = age97,
+    pcged970 = pcged97, mratio960 = mratio96, pcg_id
+  ) %>%
+  filter(kuse == 0)
+
+# Merge Data
+df2 <- left_join(df0, df1, "pm")
+df2 <- df2 %>%
+  mutate(
+    y = y1 - y0,
+    male = male1 - male0,
+    black = black1 - black0,
+    age97 = age971 - age970,
+    pcged97 = pcged971 - pcged970,
+    mratio96 = mratio961 - mratio960
+  )
+
+# Regression of Difference Scores (one-tailed test)
+reg1 <- lm(y ~ male + black + age97 + pcged97 + mratio96, data = df2)
+broom::tidy(lmtest::coeftest(reg1, vcov = vcovCL, cluster = df2$pcg_id.x)) %>%
+  mutate(p.value.one.tailed = p.value / 2)
+```
+
+### Optimal (Pair) Matching Using the MatchIt Package
+
+For an easier interface for the `optmatch` package, the `MatchIt::matchit()` function also implements optimal full matching and optimal pair matching with the `method = "full"` and `method = "optimal"` arguments, respectively. Variable matching can be set using the `ratio`, `min.controls`, and `max.controls` arguments.
+
+Below is an illustration of optimal pair matching (by default, 1:1 without replacement) using generalized boosted model to generate the propensity scores and then a regression model for the outcome that incorporates the matching weights. Here we find that on average children who used AFDC had a letter-word identification score in 1997 that was 4.13 points lower than do children who never used AFDC ($p < .001$).
+
+```{r}
+# Optimal 1:1 Pair Matching Without Replacement Using GBM (ATT)
+set.seed(1000)
+(pm2 <- matchit(
+  formula = kuse ~ pcg_adc + age97 + mratio96 + pcged97 + black,
+  data = d,
+  method = "optimal",
+  replace = F,
+  ratio = 1,
+  distance = "gbm",
+  estimand = "ATT"
+))
+
+# Balance Checks
+cobalt::bal.tab(pm2, binary = "std", un = T, threshold = c(m = .1))
+cobalt::love.plot(pm2, un = T, binary = "std", threshold = c(m = .1),
+                  sample.names = c("Unmatched", "Matched"))
+
+# Get matched data
+md <- match.data(pm2)
+
+# Outcome models with matching weights and cluster-robust SEs
+pm2.lm1 <- lm(lwss97 ~ kuse, data = md, weights = weights)
+pm2.lm2 <- lm(lwss97 ~ kuse * (male + black + age97 + pcged97 + mratio96), data = md, 
+             weights = weights)
+pm2.lm3 <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96 + distance,
+              data = md, weights = weights)
+pm2.lm4 <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96, data = md, 
+             weights = weights) # doubly-robust
+broom::tidy(lmtest::coeftest(pm2.lm1, vcov = vcovCL, cluster = md$pcg_id))
+broom::tidy(lmtest::coeftest(pm2.lm2, vcov = vcovCL, cluster = md$pcg_id))
+broom::tidy(lmtest::coeftest(pm2.lm3, vcov = vcovCL, cluster = md$pcg_id))
+broom::tidy(lmtest::coeftest(pm2.lm4, vcov = vcovCL, cluster = md$pcg_id))
+
+# Estimate ATT with marginaleffects::avg_comparisons() (G-computation)
+marginaleffects::avg_comparisons(pm2.lm4,
+  variables = "kuse", # treatment
+  vcov = ~subclass + pcg_id, # cluster-robust SEs
+  newdata = subset(md, kuse == 1), # ATT
+  wts = "weights"
+)
+```
+
+\newpage
+# 5.5 Computer Lab: Running the IPTW Estimator with R
+
+## Load Packages
+
+Propensity score weighting can be accomplished with base R functions. However, we need the `lmtest` and `sandwich` packages to estimate clustered covariance matrices in this example. Using these packages, we can obtain estimates and standard errors that are identical to Stata's `regress` program.
+
+```{r message=F, warning=F, error=F}
+pacman::p_load(lmtest, sandwich)
+```
+
+## Description of Dataset
+
+This dataset is from a study that investigates intergenerational dependence on welfare and its relation to child academic achievement.^[Hofferth, S., Stafford, F. P., Yeung, W. J., Duncan, G. J., Hill, M. S., Lepkowski, J., et al. (2001). *Panel study of income dynamics, 1968–1999: Supplemental files (computer file), ICPSR version*. Ann Arbor: University of Michigan Survey Research Center.]
+
+The dependent variable is `lwss97` or "letter-word identification" score, and the treatment condition is `kuse` or children who used Aid to Families With Dependent Children (AFDC). The covariates are:
+
+- `male`: Child's Gender: Male (Reference: Female)
+- `black`: Child's Race: African American (Reference: Other)
+- `age97`: Child's Age in 1997
+- `pcged97`: Caregiver's Education in 1997 (Years of Schooling)
+- `mratio96`: Ratio of Family Income to Poverty Line in 1996
+
+Additionally, `pcg_id` is a cluster variable that identifies children nested within families.
+
+## Estimate ATE and ATT Weights
+
+Separate weights need to be calculated for estimating the average treatment effect (ATE) and the average treatment effect for the treated (ATT). Propensity score weighting for estimating ATE is generally referred to as the inverse probability of treatment weights (IPTW) estimator.
+
+For ATE, the weight estimates are calculated as follows for the treatment group:
+
+$$
+\omega = \frac{1}{\hat{e}(x)}
+$$
+
+And for the control group:
+
+$$
+\omega = \frac{1}{1 - \hat{e}(x)}
+$$
+
+For ATT, the weight is 1 for a treated case. The weight for a comparison case is:
+
+$$
+\omega = \frac{\hat{e}(x)}{1 - \hat{e}(x)}
+$$
+
+\newpage
+## Load Data with Propensity Scores and Calculate Weights
+
+```{r}
+psw_df <- read_dta("data/chpt5_2_original.dta") %>%
+  haven::zap_formats() %>%
+  sjlabelled::remove_all_labels() %>%
+  as_tibble() %>%
+  mutate(
+    ate_w = ifelse(kuse == 0, 1 / (1 - ps), 1 / ps),
+    att_w = ifelse(kuse == 0, ps / (1 - ps), 1)
+  )
+```
+
+## Check Balance
+
+In addition to standardized mean differences, variance ratios can be requested. Common thresholds for balanced groups are .5 and 2, but it will be close to 1 when group variances are similar. Remember to use `s.d.denom = "pooled"' for the ATE and 's.d.denom = "treated"' for the ATT.
+
+```{r}
+# ATE
+cobalt::bal.tab(
+  x = select(psw_df, male, black, age97, pcged97, mratio96),
+  treat = psw_df$kuse,
+  binary = "std",
+  continuous = "std",
+  s.d.denom = "pooled",
+  un = T,
+  stats = c("mean.diffs", "variance.ratios"),
+  thresholds = c(m = .1, v = 2)
+)
+
+# ATT
+cobalt::bal.tab(
+  x = select(psw_df, male, black, age97, pcged97, mratio96),
+  treat = psw_df$kuse,
+  binary = "std",
+  continuous = "std",
+  s.d.denom = "treated",
+  un = T,
+  stats = c("mean.diffs", "variance.ratios"),
+  thresholds = c(m = .1, v = 2)
+)
+```
+
+## Calculate Weights with the WeightIt Package
+
+```{r message=F, fig.width=6, fig.height=3.5, fig.align="center"}
+# Load Package
+pacman::p_load(WeightIt)
+
+# Estimate ATE and ATT weights and Compare with Previous Results
+ate_w2 <- WeightIt::get_w_from_ps(ps = psw_df$ps, treat = psw_df$kuse, estimand = "ATE")
+table(ate_w2 == psw_df$ate_w)
+att_w2 <- WeightIt::get_w_from_ps(ps = psw_df$ps, treat = psw_df$kuse, estimand = "ATT")
+table(att_w2 == (psw_df$ate_w * psw_df$ps))
+```
+
+## Outcome Analysis
+
+### Weighted Regression with ATE Weights
+
+After creating the weights, use the `weights` argument in `lm()` to run a weighted outcome analysis and `lmtest::coeftest()` to control for clustering effects.
+
+This analysis showed that children who used Aid to Families With Dependent Children (AFDC) had an average letter-word identification score that was 5.16 points lower than children who never used AFDC, $p < .01$.
+
+```{r message=FALSE, warning=FALSE}
+# ATE
+psw_ate <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96,
+  data = psw_df, weights = ate_w
+)
+lmtest::coeftest(psw_ate, vcov. = vcovCL(psw_ate, cluster = psw_df$pcg_id))
+```
+
+### Weighted Regression with ATT Weights
+
+When considering only individuals assigned to the treatment condition, children who used AFDC had an average letter-word identification score that was 4.62 points lower than children who never used AFDC, $p < .01$.
+
+```{r message=FALSE, warning=FALSE}
+# ATT
+psw_att <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96,
+  data = psw_df, weights = att_w
+)
+lmtest::coeftest(psw_att, vcov. = vcovCL(psw_att, cluster = psw_df$pcg_id))
+```
+
+## Check Balance
+
+To assess balance before and after propensity score weighting, we can use weighted logistic regression for the dummy covariates and weighted simple regression for the continuous covariates. Some examples are included below, and the full code can be found in Section 7.3.1 of the PSA-R code.
+
+In model `psw_c3` below, the treatment dummy variable is significant, meaning that there is no sufficient balance after the propensity score weighting.
+
+To assess balance before propensity score weighting, remove the `weights` argument.
+
+```{r}
+psw_c1 <- glm(male ~ kuse, family = quasibinomial, data = psw_df, weights = ate_w)
+lmtest::coeftest(psw_c1, vcov. = vcovCL(psw_c1, cluster = psw_df$pcg_id))
+psw_c2 <- glm(male ~ kuse, family = quasibinomial, data = psw_df, weights = att_w)
+lmtest::coeftest(psw_c2, vcov. = vcovCL(psw_c2, cluster = psw_df$pcg_id))
+
+psw_c3 <- lm(age97 ~ kuse, weights = ate_w, data = psw_df)
+lmtest::coeftest(psw_c3, vcov. = vcovCL(psw_c3, cluster = psw_df$pcg_id))
+psw_c4 <- lm(age97 ~ kuse, weights = att_w, data = psw_df)
+lmtest::coeftest(psw_c4, vcov. = vcovCL(psw_c4, cluster = psw_df$pcg_id))
+```
+
+Alternatively, balance can be assessed using the `cobalt` package.
+
+```{r}
+# ATE
+(psw_b1 <- cobalt::bal.tab(
+  x = select(psw_df, male, black, age97, pcged97, mratio96),
+  treat = psw_df$kuse,
+  weights = psw_df$ate_w,
+  binary = "std",
+  continuous = "std",
+  s.d.denom = "pooled",
+  un = T,
+  stats = c("mean.diffs", "variance.ratios"),
+  thresholds = c(m = .1, v = 2)
+))
+cobalt::love.plot(psw_b1)
+
+# ATT
+(psw_b2 <- cobalt::bal.tab(
+  x = select(psw_df, male, black, age97, pcged97, mratio96),
+  treat = psw_df$kuse,
+  weights = psw_df$att_w,
+  binary = "std",
+  continuous = "std",
+  s.d.denom = "treated",
+  un = T,
+  stats = c("mean.diffs", "variance.ratios"),
+  thresholds = c(m = .1, v = 2)
+))
+cobalt::love.plot(psw_b2)
+```
+
+## Using WeightIt
+
+The WeightIt package can generate propensity scores and the appropriate weights in a single step.
+
+```{r}
+# Estimate propensity scores and generate ATT weights
+psw_g1 <- WeightIt::weightit(
+  kuse ~ male + black + age97 + pcged97 + mratio96,
+  data = psw_df, estimand = "ATT", method = "glm"
+)
+
+# Check balance
+cobalt::bal.tab(
+  psw_g1,
+  binary = "std",
+  continuous = "std",
+  s.d.denom = "treated", # att
+  un = T,
+  stats = c("m"),
+  thresholds = c(m = .1)
+)
+
+# Attach ATT weights to dataframe
+psw_df2 <- psw_df %>% mutate(att_weights = psw_g1$weights)
+
+# Fit outcome model and estimate treatment effect with cluster-robust SEs
+psw_g2 <- lm(lwss97 ~ kuse + male + black + age97 + pcged97 + mratio96,
+  data = psw_df2, weights = att_weights
+)
+marginaleffects::avg_comparisons(
+  psw_g2,
+  variables = "kuse",
+  vcov = ~pcg_id,
+  newdata = subset(psw_df2, kuse == 1), # att
+  wts = "att_weights"
+)
+
+# How would you calculate the ATE weights using this approach?
+```
+
+\newpage
+# 6.9 Computer Lab: Running the Matching Estimators with R
+
+## Matching Estimators
+
+### Load Packages
+
+A variety of matching estimators are implemented in the `Matching` package. Unlike the `MatchIt` package, which uses "subset selection" to arrive at a weighted subset of the units from the dataset, the `Matching` package uses "matching imputation" to impute potential outcomes using the observed outcomes of paired units.^[https://kosukeimai.github.io/MatchIt/articles/matching-methods.html] 
+
+Because the assumptions about constant treatment effect and homoskedasticity may not be valid for certain types of data, we will use the `lmtest` package for the Breusch-Pagan Test to check this assumption.
+
+```{r message=F, warning=F, error=F}
+pacman::p_load(Matching)
+```
+
+Note that the `Matching::Match()` function is intended to be used in conjunction with the `MatchBalance()` function. However, functions from the `cobalt` package also work well and tend to be cleaner in presentation:^[https://ngreifer.github.io/cobalt/articles/other-packages.html]
+
+```{r eval=F}
+data(lalonde, package = "Matching")
+ex_f <- as.formula(treat ~ age + I(age^2) + educ + I(educ^2) + black +
+  hisp + married + nodegr + re74 + I(re74^2) + re75 + I(re75^2) +
+  u74 + u75)
+ex_m1 <- glm(ex_f, family = binomial, data = lalonde)
+ex_p <- ex_m1$fitted.values
+ex_X <- ex_m1$fitted
+ex_Y <- lalonde$re78
+ex_Tr <- lalonde$treat
+ex_rr <- Match(Y = ex_Y, Tr = ex_Tr, X = ex_X, M = 1)
+summary(ex_rr)
+ex_mb <- MatchBalance(treat ~ age + I(age^2) + educ + I(educ^2) + black +
+  hisp + married + nodegr + re74 + I(re74^2) + re75 + I(re75^2) +
+  u74 + u75, data = lalonde, match.out = ex_rr, nboots = 10)
+(ex_bal <- cobalt::bal.tab(ex_rr, ex_f,
+  data = lalonde, distance = ~ex_p, un = T,
+  binary = "std", threshold = .1
+))
+cobalt::love.plot(ex_bal, sample.names = c("Unmatched", "Matched"))
+```
+
+### Description of Dataset
+
+This example uses the 1997 Child Development Supplement (CDS) to the Panel Study of Income Dynamics (PSID) and the core PSID annual data from 1968 to 1997.
+
+The dependent variable in this dataset is `pcss97`, a passage comprehension score. Higher scores on this measure indicate higher academic achievement. The treatment variable is `kuse` or children who ever used Aid to Families With Dependent Children (AFDC). The covariates or matching variables are:
+
+- `pcg_adc`: Caregiver's History of Using Welfare (Number of Years; range: 0-7)
+- `age97`: Child's Age in 1997
+- `mratio96`: Ratio of Family Income to Poverty Line in 1996
+- `pcged97`: Caregiver's Education in 1997 (Years of Schooling)
+- `male`: Child's Gender: Male (1 = Male; 0 = Female)
+- `black`: Child's Race: African American (1 = African American; 0 = Other)
+
+### Load Data
+
+```{r}
+me_df <- haven::read_dta("data/cds_pcss97.dta") %>%
+  haven::zap_formats() %>%
+  sjlabelled::remove_all_labels() %>%
+  as_tibble()
+head(me_df) %>%
+  kbl(booktabs = T, linesep = "", digits = 2) %>%
+  kable_styling(position = "center") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+```
+
+### Breusch-Pagan Test for Heteroskedasticity
+
+The homoskedastic variance estimator assumes that the unit-level treatment effect is constant and that the conditional variance of $Y_i(w)$ given $X_i$ does not vary with either covariates or the treatment.
+
+To carry out the Breusch-Pagan Test, first we regress the outcome variable on the matching variables using OLS:
+
+```{r message=FALSE, warning=FALSE}
+# Regress outcome on treatment and matching variables using OLS
+me_m1 <- lm(pcss97 ~ kuse + male + black + age97 + pcged97 + mratio96 + pcg_adc,
+  data = me_df
+)
+```
+
+Next, we can run the Breusch-Pagan test for each matching variable:
+
+```{r eval=F}
+lmtest::bptest(me_m1, ~kuse, data = me_df, studentize = F)
+lmtest::bptest(me_m1, ~male, data = me_df, studentize = F)
+lmtest::bptest(me_m1, ~black, data = me_df, studentize = F)
+lmtest::bptest(me_m1, ~age97, data = me_df, studentize = F) # significant
+lmtest::bptest(me_m1, ~pcged97, data = me_df, studentize = F)
+lmtest::bptest(me_m1, ~mratio96, data = me_df, studentize = F)
+lmtest::bptest(me_m1, ~pcg_adc, data = me_df, studentize = F)
+```
+
+Or use a function to test every variable:
+
+```{r}
+bp <- function(var, df, md) {
+  lmtest::bptest(md, as.formula(paste0("~", var)), data = df, studentize = F) %>%
+    broom::tidy() %>%
+    mutate(variable = var) %>%
+    select(variable, statistic, p.value)
+}
+map_dfr(c("kuse", "male", "black", "age97", "pcged97", "mratio96", "pcg_adc"), bp,
+  df = me_df, md = me_m1
+) %>%
+  kbl(
+    booktabs = T, linesep = "", digits = 2,
+    caption = "Results of Breusch-Pagan Tests for Heteroskedasticity"
+  ) %>%
+  kable_styling(position = "center") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+```
+
+Results from the Breusch-Pagan tests showed that the homoskedasticity assumption is not valid for child's age (`age97`) ($p < .05$) and indicated that the conditional variance of the outcome variable was not constant across levels of child's age. Based on this finding, we should use the robust variance estimator that allows for heteroskedasticity (i.e., the `Var.calc` argument in the `Matching::Match()` function).
+
+### Matching Estimators
+
+Of the six matching variables in this example, four are continuous and two are categorical, therefore bias-corrected matching estimator is necessary to correct for bias corresponding to the matching discrepancies between matched units and their matches on the four continuous covariates. Regression adjustment can be used with the `BiasAdjust = T` argument. (Tip: When you have one or more continuous covariate in your matching, always use the bias-corrected matching estimator.)
+
+By default, the `Matching::Match()` function uses the matching variables to make bias adjustments. However, these covariates can be specified using the `Z` argument (example shown below).
+
+The `M` argument specifies the number of matches which should be found. The default is one-to-one matching (i.e., M = 1). Abadie and Imbens suggest that M be small, and `M = 4` typically performs well in terms of mean-squared error.
+
+If `Var.calc = 0`, then homoskedasticity is assumed. Use `Var.calc = 4` to request the robust variance estimator using four matches. This algorithm developed by Abadie and Imbens (2002) includes a second matching procedure such that it matches treated units to treated units and control units to controls.
+
+The `estimand` argument is by default "ATT" but can be set to "ATE" or "ATC". Typically, we are interested in the ATE or ATT. The ATT seeks to answer questions such as "How would treated patients' outcomes differ, on average, had they not received treatment?"; the ATE is the treatment effect for both control and treated units; and the ATC, the average treatment effect for the controls, investigates the effect of the treatment for a population who did not receive treatment.^[https://arxiv.org/abs/2106.10577]
+
+The `sample` argument is a logical flag indicating whether the population or sample variance should be estimated. An example may help illustrate the difference between PATE and SATE: "While the SATE is useful for judging how a job-training program has affected a particular group of
+participants, the PATE can be used to evaluate whether another group of participants
+drawn from the same population is likely to benefit from the program."^[https://journals.sagepub.com/doi/pdf/10.1177/1536867X0400400307] In other words, the sample effect shows whether the program is successful in the sample at hand, while the population effect shows whether the same program would be successful in a second sample from the population.
+
+Results from the `Matching::Match()` function are identical to Stata's `nnmatch` program.
+
+### Define Outcome (Y), Treatment Index (Tr), and Variables to Match On (X)
+
+Use the `Y`, `Tr`, and `X`, arguments in the `Match()` function to specify the outcome vector, the treatment vector, and the matrix of variables to match on, respectively. The X matrix may or may not contain the propensity score.
+
+```{r}
+me_Y <- me_df$pcss97
+me_Tr <- me_df$kuse
+me_X <- select(me_df, male, black, age97, pcged97, mratio96, pcg_adc)
+```
+
+### Get Estimators Individually
+
+Note that by default matching is done with replacement. However, this can be changed with the `replace` argument. A matched dataset can be recovered by using the `index.treated` and `index.control` vectors. Further, `index.dropped` contains observations that have been dropped (e.g., due to a caliper setting).
+
+```{r eval=F}
+# Sample Average Treatment Effect (SATE)
+me1 <- Match(
+  Y = me_Y, Tr = me_Tr, X = me_X, M = 4, BiasAdjust = T, Var.calc = 4,
+  estimand = "ATE", sample = T
+)
+summary(me1)
+head(me1$index.treated)
+head(me1$index.control)
+head(me1$index.dropped)
+head(me1$se) # Abadie-Imbens standard error
+
+# Population Average Treatment Effect (PATE)
+summary(Match(
+  Y = me_Y, Tr = me_Tr, X = me_X, M = 4, BiasAdjust = T, Var.calc = 4,
+  estimand = "ATE", sample = F
+))
+
+# Sample average treatment effect for the treated (SATT)
+summary(Match(
+  Y = me_Y, Tr = me_Tr, X = me_X, M = 4, BiasAdjust = T, Var.calc = 4,
+  estimand = "ATT", sample = T
+))
+
+# Population average treatment effect for the treated (PATT)
+summary(Match(
+  Y = me_Y, Tr = me_Tr, X = me_X, M = 4, BiasAdjust = T, Var.calc = 4,
+  estimand = "ATT", sample = F
+))
+
+# Sample average treatment effect for the controls (SATC)
+summary(Match(
+  Y = me_Y, Tr = me_Tr, X = me_X, M = 4, BiasAdjust = T, Var.calc = 4,
+  estimand = "ATC", sample = T
+))
+
+# Population average treatment effect for the controls (PATC)
+summary(Match(
+  Y = me_Y, Tr = me_Tr, X = me_X, M = 4, BiasAdjust = T, Var.calc = 4,
+  estimand = "ATC", sample = F
+))
+```
+
+### Get All Estimators
+
+```{r}
+# Function for extracting estimate, SE, t-stat, and p-value from Match()
+get_match <- function(estimand, sample, Y, Tr, X) {
+  m <- Matching::Match(
+    Y = Y, Tr = Tr, X = X, M = 4, BiasAdjust = T, Var.calc = 4,
+    estimand = estimand, sample = sample
+  )
+  return(list(
+    est = m$est[, 1],
+    se = m$se,
+    t.stat = m$est[, 1] / m$se,
+    p = (1 - pnorm(abs(m$est[, 1] / m$se))) * 2
+  ))
+}
+
+# Estimate different matching estimators
+tribble(
+  ~estimator, ~estimand, ~sample,
+  "SATE", "ATE", T,
+  "PATE", "ATE", F,
+  "SATT", "ATT", T,
+  "PATT", "ATT", F,
+  "SATC", "ATC", T,
+  "PATC", "ATC", F
+) %>%
+  rowwise() %>%
+  mutate(match = list(get_match(estimand, sample, me_Y, me_Tr, me_X))) %>%
+  unnest_wider(match) %>%
+  select(-estimand, -sample) %>%
+  kbl(
+    booktabs = T, linesep = "",
+    caption = "Bias-Corrected Matching Estimators with Robust Standard Errors"
+  ) %>%
+  kable_styling(position = "center") %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+```
+
+The results suggest that childhood poverty strongly affected children's academic achievement.
+
+**ATE:** On average, children who used AFDC in childhood had a passage comprehension score 4.7 units lower than that of children who had never used AFDC in childhood. This effect is statistically significant in the sample at hand (SATE $p < .05$) as well as in a second sample drawn from the same population (PATE $p < .05$).
+
+**ATT:** With regard to the subpopulation of treated participants, on average, children who used AFDC in childhood had a passage comprehension score 5.2 units lower than that of children who had never used AFDC in childhood. This effect is statistically significant in the sample at hand (SATT $p < .05$) as well as in a second sample drawn from the same population (PATT $p < .05$).
+
+**ATC:** Had all controls (i.e., children who never used AFDC) used AFDC and all treated children had not used AFDC, then on average, the control children would have a passage comprehension score 4.5 units lower than their counterparts (SATC $p < .05$; PATC $p < .05$).
+
+Additional observations:
+
+1. A population effect indicates whether the tested intervention will be effective in a second sample taken from the same population. Taking SATT and PATT as examples, the study indicated that the treatment effect for the treated group was statistically significant in the sample at a level of .01. If we take a second sample from the population, we are likely to observe the same level of treatment effect for the treated, and the effect should remain statistically significant at a level of .01. The point estimate of the population effect is identical to the point estimate of its corresponding sample effect. A population effect differs from its corresponding sample effect on variance, and thus significance test on a population effect may have a different conclusion than that on its corresponding sample effect. Note that if treated units are discarded (e.g., due to a caliper), the estimand no longer estimates a particular population but rather only the average treatment effect on the remaining matched units (ATM).
+
+2. Note that in this study, SATT = -5.23 and SATC = -4.47, or a difference of 0.76 units. This difference is attributable either to additional selection bias that was not accounted for in the study or to study data that violated assumptions of matching estimators, which suggests the need for further scrutiny.
+
+3. All six treatment effects were statistically significant ($p < .05$). Thus, we can conclude that the study data could not reject a null hypothesis of a zero treatment effect, and childhood poverty appears to be an important factor causing children's poor achievement in passage comprehension.
+
+### Specify Variables in the Bias-Corrected Matching
+
+The `Z` argument can be used to specify the covariates for which we wish to make bias adjustments.
+
+```{r}
+# Sample Average Treatment Effect (SATE)
+me_Z <- select(me_df, age97, pcged97, mratio96, pcg_adc)
+summary(Matching::Match(
+  Y = me_Y, Tr = me_Tr, X = me_X, Z = me_Z, M = 4,
+  BiasAdjust = T, Var.calc = 4, estimand = "ATE", sample = T
+))
+```
+
+\newpage
+### Check Balance
+
+The `Matching::Match()` function works well in conjunction with the `cobalt::bal.tab()` function for checking covariate balance.
+
+By default, the denominator for standardized mean differences uses a pooled estimate (square root of the average of the group variances) for ATE and the standard deviation of the treated group for ATT, and both standard deviations are computed using the sample before matching. This option can also be manually set with the `s.d.denom` option.
+
+```{r fig.width=5.5, fig.height=3, fig.align="center"}
+# Example of Checking Balance for SATE
+me_SATE <- Match(
+  Y = me_Y, Tr = me_Tr, X = me_X, M = 4, BiasAdjust = T, Var.calc = 4,
+  estimand = "ATE", sample = T
+)
+(me_SATE_bal <- cobalt::bal.tab(
+  me_SATE, kuse ~ male + black + age97 + pcged97 + mratio96 + pcg_adc,
+  data = me_df,
+  abs = T,
+  un = T,
+  binary = "std",
+  thresholds = c(m = .1),
+  s.d.denom = "pooled"
+))
+cobalt::love.plot(me_SATE_bal, sample.names = c("Unmatched", "Matched")) +
+  labs(title = "Covariate Balance for SATE")
+```
+
+### Outcome Analysis
+
+```{r}
+# Recovering a matched dataset
+me_out <- Match(
+  Y = me_Y, Tr = me_Tr, X = me_X, M = 1, Var.calc = 4,
+  estimand = "ATT", sample = T, replace = F
+)
+summary(me_out)
+me_out_md <- rbind(me_df[me_out$index.treated,], me_df[me_out$index.control,])
+```
+
+\newpage
+## Bonus: Nearest Neighbor Matching with the Matching Package
+
+```{r}
+# Calculate propensity scores
+me_glm <- glm(kuse ~ male + black + age97 + pcged97 + mratio96 + pcg_adc,
+  family = binomial, data = me_df
+)
+
+# Nearest neighbor matching with MatchIt::matchit()
+me_MatchIt <- MatchIt::matchit(
+  kuse ~ male + black + age97 + pcged97 + mratio96 + pcg_adc,
+  method = "nearest",
+  distance = "glm",
+  estimand = "ATT",
+  data = me_df,
+  m.order = "data",
+  replace = F
+)
+
+# Nearest neighbor matching with Matching::Match()
+me_Matching <- Matching::Match(
+  Y = me_df$pcss97,
+  Tr = me_df$kuse,
+  X = me_glm$fitted,
+  M = 1,
+  replace = F,
+  estimand = "ATT",
+  distance.tolerance = 0,
+  ties = F,
+  sample = F
+)
+
+# Verify that the results are identical
+cobalt::bal.tab(me_MatchIt, weights = me_Matching)
+```
+
+\newpage
+# Appendix A: IMBALANCE Stata Module in R
+
+```{r eval=F}
+imbalance <- function(df, varname, treatname, blockname) {
+
+  # dx
+  df2 <- df %>%
+    group_by({{ treatname }}) %>%
+    summarise(
+      m_x = mean({{ varname }}),
+      sd_x = sd({{ varname }}),
+      .groups = "drop"
+    )
+  mxt <- df2[2, 2]
+  mxc <- df2[1, 2]
+  s2xt <- df2[2, 3]^2
+  s2xc <- df2[1, 3]^2
+  sx <- sqrt((s2xt + s2xc) / 2)
+  dx <- as.numeric(abs(mxt - mxc) / sx)
+
+  # dx
+  df3 <- df %>%
+    group_by({{ blockname }}, {{ treatname }}) %>%
+    summarise(
+      m_x = mean({{ varname }}),
+      sd_x = sd({{ varname }}),
+      n = n(),
+      .groups = "drop"
+    )
+
+  mxc <- as.numeric(mean(filter(df3, {{ treatname }} == 0)$m_x))
+  mxt <- as.numeric(mean(filter(df3, {{ treatname }} == 1)$m_x))
+  dxm_num <- abs(mxt - mxc)
+  dxm <- as.numeric(dxm_num / sx)
+
+  return(list(dx = dx, dxm = dxm))
+}
+```
+
+## Example Usage
+
+```{r eval=F}
+imbalance(df, mratio96, kuse, fm)
+```
+
+\newpage
+# Appendix B: HODGESL Stata Module in R
+
+```{r eval=F}
+hodgesl <- function(dataname, varname, blockname, treatname) {
+  blockname_str <- deparse(substitute(blockname))
+  set.seed(1000)
+  renamed_file <- dataname %>%
+    filter(!is.na({{ blockname }}))
+  r1 <- renamed_file %>%
+    group_by({{ blockname }}) %>%
+    summarise(m_y = mean({{ varname }}), .groups = "drop") %>%
+    arrange({{ blockname }})
+  r2 <- renamed_file %>%
+    group_by({{ blockname }}, {{ treatname }}) %>%
+    summarise(
+      mean_y = mean({{ varname }}),
+      n = n(), .groups = "drop"
+    ) %>%
+    mutate(mean_diff = ifelse({{ treatname }} == 1,
+      ((n + lag(n)) / sum(n)) * (mean_y - lag(mean_y)), NA
+    )) %>%
+    mutate(tx_effect = sum(mean_diff, na.rm = T)) %>%
+    mutate(i = row_number()) %>%
+    slice(1) %>%
+    select(tx_effect, i)
+  fm_results <- renamed_file %>%
+    group_by({{ blockname }}, {{ treatname }}) %>%
+    summarise(
+      mean_y = mean({{ varname }}),
+      n = n(), .groups = "drop"
+    )
+  r3 <- renamed_file %>%
+    group_by({{ blockname }}, {{ treatname }}) %>%
+    summarise(m_or_n = n(), .groups = "drop") %>%
+    arrange({{ blockname }}, {{ treatname }}) %>%
+    mutate(mi = ifelse({{ treatname }} == 0, m_or_n,
+      ifelse({{ treatname }} == 1, NA, NA)
+    )) %>%
+    mutate(ni = ifelse({{ treatname }} == 1, m_or_n,
+      ifelse({{ treatname }} == 0, NA, NA)
+    )) %>%
+    mutate(Ni = ni + lag(mi)) %>%
+    mutate(mi = ifelse(is.na(mi), lag(mi), mi)) %>%
+    filter(!is.na(Ni)) %>%
+    mutate(factor = (mi * ni) / (Ni * (Ni - 1))) %>%
+    select({{ blockname }}, factor) %>%
+    arrange({{ blockname }})
+  r4 <- renamed_file %>%
+    arrange({{ blockname }}) %>%
+    left_join(r1, by = blockname_str) %>%
+    mutate(dy = {{ varname }} - m_y) %>%
+    arrange(dy) %>%
+    mutate(rk = row_number()) %>%
+    arrange({{ blockname }})
+  r4a <- r4 %>%
+    filter({{ treatname }} != 0) %>%
+    group_by({{ blockname }}) %>%
+    summarise(wsi = sum(rk), .groups = "drop")
+  r5 <- r4 %>%
+    group_by({{ blockname }}) %>%
+    summarise(ki_ = mean(rk), .groups = "drop")
+  r6 <- r4 %>%
+    filter({{ treatname }} != 0) %>%
+    group_by({{ blockname }}) %>%
+    summarise(ni = n(), .groups = "drop") %>%
+    arrange({{ blockname }}) %>%
+    left_join(r5, by = blockname_str) %>%
+    mutate(E_wsi = ni * ki_) %>%
+    arrange({{ blockname }})
+  r7 <- r4 %>%
+    arrange({{ blockname }}) %>%
+    left_join(r5, by = blockname_str) %>%
+    mutate(k = (rk - ki_)^2) %>%
+    group_by({{ blockname }}) %>%
+    summarise(ss_kd_i = sum(k), .groups = "drop") %>%
+    arrange({{ blockname }})
+  results <- r3 %>%
+    arrange({{ blockname }}) %>%
+    left_join(r7, by = blockname_str) %>%
+    left_join(r6, by = blockname_str) %>%
+    left_join(r4a, by = blockname_str) %>%
+    mutate(
+      var_wsi = factor * ss_kd_i,
+      var = sum(var_wsi),
+      sum_Ewsi = sum(E_wsi),
+      ws = sum(wsi),
+      HL_mean = ws - sum_Ewsi,
+      HL_se = sqrt(var),
+      z = HL_mean / HL_se,
+      p = 1 - pnorm(abs(z))
+    ) %>%
+    select(HL_mean, HL_se, z, p) %>%
+    slice(1) %>%
+    mutate(i = row_number()) %>%
+    left_join(r2, by = "i")
+  return(results)
+}
+```
+
+\newpage
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+
+```{r echo=F}
+toc()
+```
