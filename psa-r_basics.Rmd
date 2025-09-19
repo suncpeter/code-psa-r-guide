@@ -1037,7 +1037,7 @@ broom::tidy(lmtest::coeftest(reg1, vcov = vcovCL, cluster = df2$pcg_id.x)) %>%
 
 For an easier interface for the `optmatch` package, the `MatchIt::matchit()` function also implements optimal full matching and optimal pair matching with the `method = "full"` and `method = "optimal"` arguments, respectively. Variable matching can be set using the `ratio`, `min.controls`, and `max.controls` arguments.
 
-Below is an illustration of optimal pair matching (by default, 1:1 without replacement) using generalized boosted model to generate the propensity scores and then a regression model for the outcome that incorporates the matching weights. Here we find that on average children who used AFDC had a letter-word identification score in 1997 that was 4.13 points lower than do children who never used AFDC ($p < .001$).
+Below is an illustration of optimal pair matching (by default, 1:1 without replacement) using GBM to generate the propensity scores and then a regression model for the outcome that incorporates the matching weights. Here we find that on average children who used AFDC had a letter-word identification score in 1997 that was 4.13 points lower than do children who never used AFDC ($p < .001$). However, post-matching balance checks revealed persistent covariate imbalances, therefore further analyses are warranted.
 
 ```{r}
 # Optimal 1:1 Pair Matching Without Replacement Using GBM (ATT)
@@ -1059,6 +1059,9 @@ cobalt::love.plot(pm2, un = T, binary = "std", threshold = c(m = .1),
 
 # Get matched data
 md <- match.data(pm2)
+
+# Individual matches can be inspected using the "subclass" column
+md %>% filter(subclass == 1)
 
 # Outcome models with matching weights and cluster-robust SEs
 pm2.lm1 <- lm(lwss97 ~ kuse, data = md, weights = weights)
@@ -1183,7 +1186,7 @@ pacman::p_load(WeightIt)
 ate_w2 <- WeightIt::get_w_from_ps(ps = psw_df$ps, treat = psw_df$kuse, estimand = "ATE")
 table(ate_w2 == psw_df$ate_w)
 att_w2 <- WeightIt::get_w_from_ps(ps = psw_df$ps, treat = psw_df$kuse, estimand = "ATT")
-table(att_w2 == (psw_df$ate_w * psw_df$ps))
+table(att_w2 == psw_df$att_w)
 ```
 
 ## Outcome Analysis
