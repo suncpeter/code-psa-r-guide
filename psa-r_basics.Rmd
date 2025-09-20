@@ -319,7 +319,7 @@ Matching estimators directly impute missing potential outcomes at the unit level
 * Calculate a variety of average treatment effects
 * Estimate effects for both the sample and the population
 
-*Liimtations*
+*Limitations*
 
 * Require a sizeable common support region
 * More sensitive to the violation of the strongly ignorable assumption
@@ -1584,7 +1584,7 @@ me_SATE <- Match(
   un = T,
   binary = "std",
   thresholds = c(m = .1),
-  s.d.denom = "pooled"
+  s.d.denom = "pooled" # ATE
 ))
 cobalt::love.plot(me_SATE_bal, sample.names = c("Unmatched", "Matched")) +
   labs(title = "Covariate Balance for SATE")
